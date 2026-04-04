@@ -1,0 +1,64 @@
+from rest_framework import serializers
+
+from .models import Block, Document
+
+
+class BlockSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Block
+        fields = [
+            "id",
+            "block_id",
+            "block_type",
+            "content_original",
+            "content_expanded",
+            "order",
+            "parent",
+            "sentences",
+            "label",
+        ]
+
+
+class DocumentListSerializer(serializers.ModelSerializer):
+    block_count = serializers.IntegerField(source="blocks.count", read_only=True)
+
+    class Meta:
+        model = Document
+        fields = [
+            "id",
+            "title",
+            "source_format",
+            "preset",
+            "agent_status",
+            "block_count",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class DocumentDetailSerializer(serializers.ModelSerializer):
+    blocks = BlockSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Document
+        fields = [
+            "id",
+            "title",
+            "source_format",
+            "preset",
+            "agent_status",
+            "structure",
+            "macro_table",
+            "blocks",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class DocumentCreateSerializer(serializers.Serializer):
+    source = serializers.CharField()
+    source_format = serializers.ChoiceField(choices=["latex", "markdown"])
+    title = serializers.CharField(required=False, allow_blank=True, default="")
+    preset = serializers.ChoiceField(
+        choices=["manual", "triage"], default="manual"
+    )
