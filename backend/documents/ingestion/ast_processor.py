@@ -140,10 +140,10 @@ def process_ast(
             parts.append(elem.text)
         elif isinstance(elem, pf.Strong):
             inner = "".join(stringify_with_math(c) for c in elem.content)
-            parts.append(f"<strong>{inner}</strong>")
+            parts.append(f"**{inner}**")
         elif isinstance(elem, pf.Emph):
             inner = "".join(stringify_with_math(c) for c in elem.content)
-            parts.append(f"<em>{inner}</em>")
+            parts.append(f"*{inner}*")
         elif hasattr(elem, "content"):
             for child in elem.content:
                 parts.append(stringify_with_math(child))

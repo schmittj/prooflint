@@ -1,10 +1,11 @@
-import { MathJax } from "better-react-mathjax";
+import Markdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeMathjax from "rehype-mathjax";
 import type { Block } from "../types/models";
 import { useUIStore } from "../stores/uiStore";
 
 interface BlockRendererProps {
     block: Block;
-    /** If true, this is a container block — don't render content_original (children handle it) */
     isContainer?: boolean;
 }
 
@@ -62,7 +63,6 @@ const TYPE_STYLES: Record<string, React.CSSProperties> = {
     list: {
         margin: "8px 0",
         lineHeight: "1.6",
-        paddingLeft: "20px",
     },
 };
 
@@ -76,7 +76,6 @@ const TYPE_LABELS: Record<string, string> = {
     proof: "Proof",
 };
 
-// Container types: these have children that carry the content
 const CONTAINER_TYPES = new Set([
     "theorem",
     "lemma",
@@ -87,7 +86,10 @@ const CONTAINER_TYPES = new Set([
     "proof",
 ]);
 
-export default function BlockRenderer({ block, isContainer }: BlockRendererProps) {
+export default function BlockRenderer({
+    block,
+    isContainer,
+}: BlockRendererProps) {
     const { activeBlockId, setActiveBlock } = useUIStore();
     const isActive = activeBlockId === block.block_id;
 
@@ -127,13 +129,16 @@ export default function BlockRenderer({ block, isContainer }: BlockRendererProps
                 </span>
             )}
             {showContent && block.content_original && (
-                <MathJax inline dynamic>
-                    <span
-                        dangerouslySetInnerHTML={{
-                            __html: block.content_original,
-                        }}
-                    />
-                </MathJax>
+                <Markdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeMathjax]}
+                    components={{
+                        // Render paragraphs as inline spans to avoid nested <p> tags
+                        p: ({ children }) => <span>{children}</span>,
+                    }}
+                >
+                    {block.content_original}
+                </Markdown>
             )}
         </div>
     );

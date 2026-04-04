@@ -1,16 +1,8 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
-import { MathJaxContext } from "better-react-mathjax";
 import { useDocumentStore } from "../stores/documentStore";
 import { useUIStore } from "../stores/uiStore";
 import BlockRenderer from "./BlockRenderer";
-
-const MATHJAX_CONFIG = {
-    tex: {
-        inlineMath: [["$", "$"]],
-        displayMath: [["$$", "$$"]],
-    },
-};
 
 export default function DocumentView() {
     const { id } = useParams<{ id: string }>();
@@ -36,8 +28,7 @@ export default function DocumentView() {
         blocks.filter((b) => b.parent === parentId);
 
     return (
-        <MathJaxContext config={MATHJAX_CONFIG}>
-            <div style={{ display: "flex", gap: "16px" }}>
+        <div style={{ display: "flex", gap: "16px" }}>
                 {/* Summary Sidebar */}
                 <aside
                     style={{
@@ -168,7 +159,6 @@ export default function DocumentView() {
                         No annotations yet.
                     </p>
                 </aside>
-            </div>
-        </MathJaxContext>
+        </div>
     );
 }
