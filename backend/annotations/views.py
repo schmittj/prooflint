@@ -1,5 +1,7 @@
+from django.shortcuts import get_object_or_404
 from rest_framework import mixins, viewsets
-from rest_framework.response import Response
+
+from documents.models import Document
 
 from .models import Annotation
 from .serializers import AnnotationCreateSerializer, AnnotationSerializer
@@ -16,6 +18,8 @@ class AnnotationViewSet(
 
     def get_queryset(self):
         doc_id = self.kwargs["document_pk"]
+        # Validate parent document exists → 404 if not
+        get_object_or_404(Document, pk=doc_id)
         qs = Annotation.objects.filter(document_id=doc_id)
 
         # Filters
@@ -39,4 +43,15 @@ class AnnotationViewSet(
         return AnnotationSerializer
 
     def perform_create(self, serializer):
-        serializer.save(document_id=self.kwargs["document_pk"])
+        doc_id = self.kwargs["document_pk"]
+        get_object_or_404(Document, pk=doc_id)
+        instance = serializer.save(document_id=doc_id)
+        # Replace response data with full read serializer
+        self._created_instance = instance
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        # Return full annotation shape (not just the write fields)
+        if hasattr(self, "_created_instance"):
+            response.data = AnnotationSerializer(self._created_instance).data
+        return response

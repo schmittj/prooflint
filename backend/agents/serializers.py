@@ -28,6 +28,7 @@ class AgentRunSerializer(serializers.ModelSerializer):
             "status",
             "model",
             "preset",
+            "chunks",
             "raw_output",
             "error_message",
             "input_tokens",
