@@ -4,6 +4,8 @@ import { useUIStore } from "../stores/uiStore";
 
 interface BlockRendererProps {
     block: Block;
+    /** If true, this is a container block — don't render content_original (children handle it) */
+    isContainer?: boolean;
 }
 
 const TYPE_STYLES: Record<string, React.CSSProperties> = {
@@ -23,6 +25,13 @@ const TYPE_STYLES: Record<string, React.CSSProperties> = {
         borderRadius: "4px",
     },
     lemma: {
+        background: "#f8f9ff",
+        borderLeft: "3px solid #4a6fa5",
+        padding: "12px 16px",
+        margin: "12px 0",
+        borderRadius: "4px",
+    },
+    proposition: {
         background: "#f8f9ff",
         borderLeft: "3px solid #4a6fa5",
         padding: "12px 16px",
@@ -50,6 +59,11 @@ const TYPE_STYLES: Record<string, React.CSSProperties> = {
         margin: "8px 0",
         lineHeight: "1.6",
     },
+    list: {
+        margin: "8px 0",
+        lineHeight: "1.6",
+        paddingLeft: "20px",
+    },
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -62,7 +76,18 @@ const TYPE_LABELS: Record<string, string> = {
     proof: "Proof",
 };
 
-export default function BlockRenderer({ block }: BlockRendererProps) {
+// Container types: these have children that carry the content
+const CONTAINER_TYPES = new Set([
+    "theorem",
+    "lemma",
+    "proposition",
+    "corollary",
+    "definition",
+    "remark",
+    "proof",
+]);
+
+export default function BlockRenderer({ block, isContainer }: BlockRendererProps) {
     const { activeBlockId, setActiveBlock } = useUIStore();
     const isActive = activeBlockId === block.block_id;
 
@@ -78,14 +103,17 @@ export default function BlockRenderer({ block }: BlockRendererProps) {
     };
 
     const label = TYPE_LABELS[block.block_type];
+    const showContent =
+        !isContainer && !CONTAINER_TYPES.has(block.block_type);
 
     return (
         <div
             data-block-id={block.block_id}
             style={style}
-            onClick={() =>
-                setActiveBlock(isActive ? null : block.block_id)
-            }
+            onClick={(e) => {
+                e.stopPropagation();
+                setActiveBlock(isActive ? null : block.block_id);
+            }}
         >
             {label && (
                 <span
@@ -98,9 +126,15 @@ export default function BlockRenderer({ block }: BlockRendererProps) {
                     {label}.{" "}
                 </span>
             )}
-            <MathJax inline dynamic>
-                {block.content_original}
-            </MathJax>
+            {showContent && block.content_original && (
+                <MathJax inline dynamic>
+                    <span
+                        dangerouslySetInnerHTML={{
+                            __html: block.content_original,
+                        }}
+                    />
+                </MathJax>
+            )}
         </div>
     );
 }

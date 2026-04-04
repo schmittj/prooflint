@@ -127,20 +127,30 @@ export default function DocumentView() {
                             No blocks yet. Upload a document to see it parsed.
                         </div>
                     ) : (
-                        topLevelBlocks.map((block) => (
-                            <div key={block.id}>
-                                <BlockRenderer block={block} />
-                                {/* Render children (e.g. paragraphs inside theorem/proof) */}
-                                {childrenOf(block.id).map((child) => (
-                                    <div
-                                        key={child.id}
-                                        style={{ marginLeft: "16px" }}
-                                    >
-                                        <BlockRenderer block={child} />
-                                    </div>
-                                ))}
-                            </div>
-                        ))
+                        topLevelBlocks.map((block) => {
+                            const children = childrenOf(block.id);
+                            const hasChildren = children.length > 0;
+                            return (
+                                <div key={block.id}>
+                                    <BlockRenderer
+                                        block={block}
+                                        isContainer={hasChildren}
+                                    />
+                                    {children.map((child) => (
+                                        <div
+                                            key={child.id}
+                                            style={{
+                                                marginLeft: hasChildren
+                                                    ? "16px"
+                                                    : "0",
+                                            }}
+                                        >
+                                            <BlockRenderer block={child} />
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })
                     )}
                 </section>
 

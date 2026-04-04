@@ -1,8 +1,43 @@
 """Process Pandoc AST into ProofLint blocks with stable IDs."""
 
+import re
+
 import panflute as pf
 
 from .sentence_splitter import split_sentences
+
+
+_LATEX_ENV_RE = re.compile(
+    r"\\begin\{(\w+)\}"       # \begin{envname}
+    r"(?:\[([^\]]*)\])?"      # optional [label/title]
+    r"(?:\\label\{([^}]*)\})?"  # optional \label{...}
+    r"(.*?)"                   # body
+    r"\\end\{\1\}",           # \end{envname}
+    re.DOTALL,
+)
+
+
+def _detect_latex_env(
+    text: str, known_envs: dict
+) -> tuple[str, str, str] | None:
+    """Detect a LaTeX theorem/proof environment in raw text.
+
+    Returns (env_type, label, body) if found, None otherwise.
+    """
+    text = text.strip()
+    m = _LATEX_ENV_RE.match(text)
+    if not m:
+        return None
+    envname = m.group(1)
+    if envname in known_envs:
+        env_type = known_envs[envname]
+    elif envname == "proof":
+        env_type = "proof"
+    else:
+        return None
+    label = m.group(3) or ""
+    body = m.group(4).strip()
+    return env_type, label, body
 
 # Environment classes that pandoc maps from LaTeX \begin{...} environments
 THEOREM_LIKE = {
@@ -105,10 +140,10 @@ def process_ast(
             parts.append(elem.text)
         elif isinstance(elem, pf.Strong):
             inner = "".join(stringify_with_math(c) for c in elem.content)
-            parts.append(f"**{inner}**")
+            parts.append(f"<strong>{inner}</strong>")
         elif isinstance(elem, pf.Emph):
             inner = "".join(stringify_with_math(c) for c in elem.content)
-            parts.append(f"*{inner}*")
+            parts.append(f"<em>{inner}</em>")
         elif hasattr(elem, "content"):
             for child in elem.content:
                 parts.append(stringify_with_math(child))
@@ -171,6 +206,65 @@ def process_ast(
             return isinstance(child, pf.Math) and child.format == "DisplayMath"
         return False
 
+    def process_list(elem, parent_id: str = "") -> dict:
+        """Process a list element into a block dict."""
+        block_id = next_id("list")
+        if parent_id:
+            block_id = f"{parent_id}.{block_id}"
+        # Stringify list items, preserving math
+        items = []
+        for item in elem.content:
+            # Each item is a ListItem containing block elements
+            item_parts = []
+            for child in item.content if hasattr(item, "content") else [item]:
+                item_parts.append(stringify_with_math(child))
+            items.append(" ".join(item_parts))
+        text = "\n".join(f"- {item}" for item in items)
+        return {
+            "block_id": block_id,
+            "block_type": "list",
+            "content_original": text,
+            "content_expanded": text,
+            "sentences": [],
+            "label": "",
+        }
+
+    def _process_any_element(elem, parent_id: str = "") -> dict | None:
+        """Process any block-level element into a block dict."""
+        if isinstance(elem, pf.Para):
+            if is_display_math_para(elem):
+                return process_math_block(elem)
+            return process_para(elem, parent_id=parent_id)
+        elif isinstance(elem, (pf.BulletList, pf.OrderedList)):
+            return process_list(elem, parent_id=parent_id)
+        elif isinstance(elem, pf.RawBlock):
+            block_id = next_id("raw_latex")
+            if parent_id:
+                block_id = f"{parent_id}.{block_id}"
+            return {
+                "block_id": block_id,
+                "block_type": "raw_latex",
+                "content_original": elem.text,
+                "content_expanded": elem.text,
+                "sentences": [],
+                "label": "",
+            }
+        elif isinstance(elem, pf.Div):
+            # Nested div — stringify it
+            block_id = next_id("paragraph")
+            if parent_id:
+                block_id = f"{parent_id}.{block_id}"
+            text = stringify_with_math(elem)
+            return {
+                "block_id": block_id,
+                "block_type": "paragraph",
+                "content_original": text,
+                "content_expanded": text,
+                "sentences": split_sentences(text),
+                "label": "",
+            }
+        return None
+
     for elem in elements:
         if isinstance(elem, pf.Header):
             block_id = next_id("section_heading")
@@ -203,25 +297,20 @@ def process_ast(
 
                 # Collect all content of the environment
                 child_blocks = []
-                full_text_parts = []
                 for child in elem.content:
-                    if isinstance(child, pf.Para):
-                        if is_display_math_para(child):
-                            child_block = process_math_block(child)
-                        else:
-                            child_block = process_para(child, parent_id=block_id)
+                    child_block = _process_any_element(
+                        child, parent_id=block_id
+                    )
+                    if child_block:
                         child_blocks.append(child_block)
-                        full_text_parts.append(child_block["content_original"])
 
-                full_text = "\n\n".join(full_text_parts)
-
-                # Create the environment block
+                # Create the environment block (content is in children only)
                 blocks.append(
                     {
                         "block_id": block_id,
                         "block_type": env_type,
-                        "content_original": full_text,
-                        "content_expanded": full_text,
+                        "content_original": "",  # children carry the content
+                        "content_expanded": "",
                         "sentences": [],
                         "label": label,
                         "children": child_blocks,
@@ -230,8 +319,9 @@ def process_ast(
             else:
                 # Unknown div — process children as top-level
                 for child in elem.content:
-                    if isinstance(child, pf.Para):
-                        blocks.append(process_para(child))
+                    child_block = _process_any_element(child)
+                    if child_block:
+                        blocks.append(child_block)
 
         elif isinstance(elem, pf.Para):
             if is_display_math_para(elem):
@@ -240,31 +330,50 @@ def process_ast(
                 blocks.append(process_para(elem))
 
         elif isinstance(elem, pf.RawBlock):
-            block_id = next_id("raw_latex")
-            blocks.append(
-                {
-                    "block_id": block_id,
-                    "block_type": "raw_latex",
-                    "content_original": elem.text,
-                    "content_expanded": elem.text,
-                    "sentences": [],
-                    "label": "",
-                }
-            )
+            # Check if this is a LaTeX environment that pandoc couldn't parse
+            # (happens when \begin{theorem} etc. appear in markdown input)
+            env_match = _detect_latex_env(elem.text, all_theorem_envs)
+            if env_match:
+                env_type, label, body = env_match
+                block_id = next_id(env_type)
+                # Re-parse the body through pandoc to get structured content
+                body_elements = pf.convert_text(
+                    body, input_format="latex", output_format="panflute"
+                )
+                child_blocks = []
+                for child_elem in body_elements:
+                    child_block = _process_any_element(
+                        child_elem, parent_id=block_id
+                    )
+                    if child_block:
+                        child_blocks.append(child_block)
+
+                blocks.append(
+                    {
+                        "block_id": block_id,
+                        "block_type": env_type,
+                        "content_original": "",
+                        "content_expanded": "",
+                        "sentences": [],
+                        "label": label,
+                        "children": child_blocks,
+                    }
+                )
+            else:
+                block_id = next_id("raw_latex")
+                blocks.append(
+                    {
+                        "block_id": block_id,
+                        "block_type": "raw_latex",
+                        "content_original": elem.text,
+                        "content_expanded": elem.text,
+                        "sentences": [],
+                        "label": "",
+                    }
+                )
 
         elif isinstance(elem, (pf.BulletList, pf.OrderedList)):
-            block_id = next_id("list")
-            text = pf.stringify(elem)
-            blocks.append(
-                {
-                    "block_id": block_id,
-                    "block_type": "list",
-                    "content_original": text,
-                    "content_expanded": text,
-                    "sentences": [],
-                    "label": "",
-                }
-            )
+            blocks.append(process_list(elem))
 
     # Assign order
     order = 0
