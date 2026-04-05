@@ -11,7 +11,6 @@ class ChunkSerializer(serializers.ModelSerializer):
             "chunk_id",
             "source_block_ids",
             "summary",
-            "expanded_argument",
             "confidence",
             "order",
         ]

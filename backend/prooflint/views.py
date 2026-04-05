@@ -25,7 +25,7 @@ ALLOWED_KEYS = {
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
     "DEFAULT_MODEL",
-    "DEFAULT_TEMPERATURE",
+    "DEFAULT_REASONING_EFFORT",
 }
 
 # Keys whose values are masked on read.
@@ -134,14 +134,11 @@ class SettingsView(APIView):
             )
 
         # Validate
-        if "DEFAULT_TEMPERATURE" in updates:
-            try:
-                temp = float(updates["DEFAULT_TEMPERATURE"])
-                if not (0.0 <= temp <= 2.0):
-                    raise ValueError
-            except (ValueError, TypeError):
+        valid_efforts = {"low", "medium", "high", "xhigh"}
+        if "DEFAULT_REASONING_EFFORT" in updates:
+            if updates["DEFAULT_REASONING_EFFORT"] not in valid_efforts:
                 return Response(
-                    {"error": "DEFAULT_TEMPERATURE must be a number between 0 and 2."},
+                    {"error": f"DEFAULT_REASONING_EFFORT must be one of: {', '.join(sorted(valid_efforts))}"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 

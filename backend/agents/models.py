@@ -26,6 +26,9 @@ class AgentRun(models.Model):
     preset = models.CharField(max_length=20)
     config = models.JSONField(default=dict, blank=True)
 
+    # External API tracking
+    openai_response_id = models.CharField(max_length=100, blank=True)
+
     # Results
     raw_output = models.JSONField(null=True, blank=True)
     error_message = models.TextField(blank=True)
@@ -58,8 +61,9 @@ class Chunk(models.Model):
     source_block_ids = models.JSONField()  # ["p3", "p4", "p5"]
 
     summary = models.TextField()
-    expanded_argument = models.TextField(blank=True)
     confidence = models.FloatField()
+    # Note: expanded arguments are stored as info annotations (tag "expanded_argument")
+    # linked to this chunk via Annotation.chunk FK.
 
     order = models.PositiveIntegerField()
 

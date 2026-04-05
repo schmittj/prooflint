@@ -37,7 +37,7 @@ export interface Annotation {
     start_block: string;
     end_block: string;
     start_offset: number;
-    end_offset: number;
+    end_offset: number | null;
     anchor_quote: string;
     // provenance
     source: "human" | "agent";
@@ -67,7 +67,6 @@ export interface Chunk {
     chunk_id: string;
     source_block_ids: string[];
     summary: string;
-    expanded_argument: string;
     confidence: number;
     order: number;
 }

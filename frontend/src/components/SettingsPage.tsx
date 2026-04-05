@@ -139,23 +139,23 @@ function ModelDefaults() {
     const setField = useSettingsStore((s) => s.setField);
     const saveField = useSettingsStore((s) => s.saveField);
     const debouncedSaveModel = useDebouncedSave("DEFAULT_MODEL");
-    const debouncedSaveTemp = useDebouncedSave("DEFAULT_TEMPERATURE");
+    const debouncedSaveEffort = useDebouncedSave("DEFAULT_REASONING_EFFORT");
 
     const modelValue = dirty["DEFAULT_MODEL"]
         ? (localEdits["DEFAULT_MODEL"] ?? "")
         : (serverValues["DEFAULT_MODEL"] ?? "");
-    const tempValue = dirty["DEFAULT_TEMPERATURE"]
-        ? (localEdits["DEFAULT_TEMPERATURE"] ?? "")
-        : (serverValues["DEFAULT_TEMPERATURE"] ?? "");
+    const effortValue = dirty["DEFAULT_REASONING_EFFORT"]
+        ? (localEdits["DEFAULT_REASONING_EFFORT"] ?? "")
+        : (serverValues["DEFAULT_REASONING_EFFORT"] ?? "xhigh");
 
     const modelStatus = saving["DEFAULT_MODEL"]
         ? "Saving…"
         : saved["DEFAULT_MODEL"]
           ? "Saved"
           : "";
-    const tempStatus = saving["DEFAULT_TEMPERATURE"]
+    const effortStatus = saving["DEFAULT_REASONING_EFFORT"]
         ? "Saving…"
-        : saved["DEFAULT_TEMPERATURE"]
+        : saved["DEFAULT_REASONING_EFFORT"]
           ? "Saved"
           : "";
 
@@ -197,7 +197,7 @@ function ModelDefaults() {
                         debouncedSaveModel();
                     }}
                     onBlur={() => saveField("DEFAULT_MODEL")}
-                    placeholder="claude-sonnet-4-6"
+                    placeholder="gpt-5.4"
                     style={{
                         width: "100%",
                         padding: "8px 10px",
@@ -220,44 +220,45 @@ function ModelDefaults() {
                     }}
                 >
                     <label
-                        htmlFor="DEFAULT_TEMPERATURE"
+                        htmlFor="DEFAULT_REASONING_EFFORT"
                         style={{ fontWeight: 500, fontSize: "0.95rem" }}
                     >
-                        Temperature
+                        Reasoning effort
                     </label>
-                    {tempStatus && (
+                    {effortStatus && (
                         <span
                             style={{
                                 fontSize: "0.8rem",
                                 color:
-                                    tempStatus === "Saved" ? "#2e7d32" : "#666",
+                                    effortStatus === "Saved" ? "#2e7d32" : "#666",
                             }}
                         >
-                            {tempStatus}
+                            {effortStatus}
                         </span>
                     )}
                 </div>
-                <input
-                    id="DEFAULT_TEMPERATURE"
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                    value={tempValue}
+                <select
+                    id="DEFAULT_REASONING_EFFORT"
+                    value={effortValue}
                     onChange={(e) => {
-                        setField("DEFAULT_TEMPERATURE", e.target.value);
-                        debouncedSaveTemp();
+                        setField("DEFAULT_REASONING_EFFORT", e.target.value);
+                        debouncedSaveEffort();
                     }}
-                    onBlur={() => saveField("DEFAULT_TEMPERATURE")}
+                    onBlur={() => saveField("DEFAULT_REASONING_EFFORT")}
                     style={{
-                        width: 120,
+                        width: 160,
                         padding: "8px 10px",
                         fontFamily: "monospace",
                         fontSize: "0.9rem",
                         border: "1px solid #ccc",
                         borderRadius: 4,
                     }}
-                />
+                >
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                </select>
                 <span
                     style={{
                         marginLeft: 8,
@@ -265,7 +266,7 @@ function ModelDefaults() {
                         color: "#888",
                     }}
                 >
-                    0 = deterministic, 2 = most creative
+                    xhigh = deepest analysis (30–50 min)
                 </span>
             </div>
         </>

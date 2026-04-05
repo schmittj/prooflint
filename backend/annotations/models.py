@@ -14,7 +14,7 @@ class Annotation(models.Model):
     start_block = models.CharField(max_length=50)
     end_block = models.CharField(max_length=50)
     start_offset = models.PositiveIntegerField(default=0)
-    end_offset = models.PositiveIntegerField(default=0)
+    end_offset = models.PositiveIntegerField(null=True, blank=True)  # null = end of block
     anchor_quote = models.TextField(blank=True)
 
     # ── Provenance ──
@@ -22,7 +22,7 @@ class Annotation(models.Model):
         max_length=20,
         choices=[("human", "Human"), ("agent", "AI Agent")],
     )
-    author = models.CharField(max_length=200, blank=True)
+    author = models.CharField(max_length=200, default="Human")
     agent_run = models.ForeignKey(
         "agents.AgentRun",
         null=True,

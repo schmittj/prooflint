@@ -1,20 +1,20 @@
 # ProofLint — MVP Technical Specification
 
-**Version**: 0.2 (Revised — incorporates review feedback)
-**Date**: 2026-04-04
-**Status**: Pre-development
+**Version**: 0.3 (Revised — annotation model v2, Bot naming, expanded argument design)
+**Date**: 2026-04-05
+**Status**: Phases 1–3 complete, Phase 4 in progress
 
 ---
 
 ## 1. Product Summary
 
-ProofLint is a browser-based tool that ingests mathematical writing (LaTeX or Markdown+LaTeX), renders it in a standardized format with stable structural IDs, and overlays AI-generated annotations to help a human expert review proofs. The MVP targets 1–2 page mathematical arguments and delivers: document ingestion/rendering, a single GlobalAnnotator agent pass, human annotations, a chatbot sidebar, and a structural summary panel.
+ProofLint is a browser-based tool that ingests mathematical writing (LaTeX or Markdown+LaTeX), renders it in a standardized format with stable structural IDs, and overlays AI-generated annotations to help a human expert review proofs. The MVP targets 1–2 page mathematical arguments and delivers: document ingestion/rendering, a single GlobalAnnotatorBot pass, human annotations, a chatbot sidebar, and a structural summary panel.
 
 ### 1.1 Design Principles
 
 - **Human-in-the-loop**: AI flags and explains; the human decides. No verdicts, only evidence.
 - **Grounding first**: Every annotation is anchored to a stable document ID. Deterministic mapping from agent output to rendered position — no fuzzy matching.
-- **Modular agents**: Each annotation type is produced by a pluggable agent conforming to a standard contract. The system is designed so new agents can be added without modifying core infrastructure.
+- **Modular bots**: Each annotation type is produced by a pluggable bot (GlobalAnnotatorBot, LiteratureBot, LeanBot, etc.) conforming to a standard contract. The system is designed so new bots can be added without modifying core infrastructure.
 - **Contributor-friendly**: Clear separation of concerns, typed interfaces, standard tooling, Docker-based dev environment.
 
 ### 1.2 Effort Presets
@@ -22,8 +22,8 @@ ProofLint is a browser-based tool that ingests mathematical writing (LaTeX or Ma
 | Preset | What runs | Use case |
 |---|---|---|
 | **Manual** | Ingest + render only; tools invoked manually on demand | Interactive workbench |
-| **Triage** | + Global summary, one-pass vetting with flags, confidence summary | Quick review: "what should I pay attention to?" |
-| **Audit** | + Full paragraph-by-paragraph vetting (post-MVP agents) | Deep review |
+| **Triage** | + GlobalAnnotatorBot: summary, one-pass vetting with flags, confidence summary | Quick review: "what should I pay attention to?" |
+| **Audit** | + Full paragraph-by-paragraph vetting (post-MVP bots) | Deep review |
 
 The MVP implements Manual and Triage. Audit is the extension point for post-MVP agents.
 
@@ -53,8 +53,8 @@ The MVP implements Manual and Triage. Audit is the extension point for post-MVP 
 │  │ documents   │  │  annotations   │  │  agents                │  │
 │  │ app         │  │  app           │  │  app                   │  │
 │  │             │  │                │  │                        │  │
-│  │ - Upload    │  │ - Human flags  │  │ - Agent orchestration  │  │
-│  │ - Ingest    │  │ - AI flags     │  │ - GlobalAnnotator      │  │
+│  │ - Upload    │  │ - Human flags  │  │ - Bot orchestration  │  │
+│  │ - Ingest    │  │ - AI flags     │  │ - GlobalAnnotatorBot      │  │
 │  │ - Retrieve  │  │ - Status       │  │ - Chat relay           │  │
 │  └──────┬─────┘  └────────────────┘  └───────────┬────────────┘  │
 │         │                                         │               │
@@ -77,7 +77,7 @@ The MVP implements Manual and Triage. Audit is the extension point for post-MVP 
 | Backend API | Django 5, Django REST Framework | REST API, orchestration, storage |
 | Ingestion | Pandoc (subprocess), panflute (AST manipulation) | LaTeX/Markdown → structured blocks with IDs |
 | Database | PostgreSQL 16 | Documents, blocks, annotations, chat history |
-| LLM access | httpx / openai / anthropic SDKs | Agent calls, chat relay |
+| LLM access | openai SDK (Responses API) / anthropic SDK | Bot calls, chat relay |
 | TikZ rendering | TeX Live (optional, Docker) | TikZ/tikzcd → SVG |
 | Dev environment | Docker Compose | Postgres, backend, frontend, optional TeX |
 
@@ -372,31 +372,41 @@ class Block(models.Model):
 
 ### 4.3 Annotation
 
-Both human annotations and AI-generated flags live in the same model, distinguished by `source`.
+Both human annotations and AI-generated annotations live in the same model, distinguished by `source`. The annotation schema follows the **Annotation Model Specification v2** (`notes/annotation-model-spec-v2.md`), which is the authoritative reference for categories, tags, severity levels, and lifecycle semantics.
 
 ```python
 class Annotation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     document = models.ForeignKey(Document, related_name="annotations", on_delete=models.CASCADE)
     
-    # Anchoring — multi-level precision
-    block_id = models.CharField(max_length=50)     # Required: which block (e.g. "p3")
-    sentence_id = models.CharField(max_length=50, blank=True)  # Optional: sentence within block
+    # Anchor — contiguous span of blocks (string IDs, not FKs, to survive re-ingestion)
+    start_block = models.CharField(max_length=50)   # First block touched (e.g. "p3")
+    end_block = models.CharField(max_length=50)      # Last block touched (== start_block for single-block)
+    start_offset = models.PositiveIntegerField(default=0)   # Character offset in start_block (0 = block start)
+    end_offset = models.PositiveIntegerField(null=True, blank=True)  # Character offset in end_block (null = end of block)
+    anchor_quote = models.TextField(blank=True)      # Verbatim quote for recovery after re-ingestion
     
-    # Character-range anchoring (for precise human selections within a block)
-    # These are character offsets within the block's content_original.
-    anchor_offset_start = models.PositiveIntegerField(null=True, blank=True)
-    anchor_offset_end = models.PositiveIntegerField(null=True, blank=True)
+    # Content
+    category = models.CharField(max_length=10, choices=[
+        ("check", "Check"),   # Records that something has been verified
+        ("info", "Info"),     # Adds context without claiming a problem
+        ("issue", "Issue"),   # Flags a potential or confirmed problem
+    ])
+    tags = models.JSONField(default=list)  # Zero or more canonical slugs (see annotation-model-spec-v2)
+    severity = models.CharField(max_length=10, choices=[
+        ("question", "Question"),  # Not sure; flagging for attention
+        ("warning", "Warning"),    # Something off, likely fixable
+        ("error", "Error"),        # Serious problem
+    ], blank=True)  # Required when category = issue; blank for check/info
+    body = models.TextField(blank=True)  # Freetext comment / explanation
+    metadata = models.JSONField(default=dict)  # Flexible key-value store (agent-specific data)
     
-    # Quote-based recovery: the exact selected text. If offsets become stale
-    # (e.g. after re-ingestion), this allows fuzzy re-anchoring.
-    anchor_quote = models.TextField(blank=True)
-    
-    # Source
+    # Provenance
     source = models.CharField(max_length=20, choices=[
         ("human", "Human"),
         ("agent", "AI Agent"),
     ])
+    author = models.CharField(max_length=200, default="Human")  # "Human" for MVP; bot name for agent annotations
     agent_run = models.ForeignKey(
         "agents.AgentRun", null=True, blank=True,
         related_name="annotations", on_delete=models.SET_NULL
@@ -405,45 +415,36 @@ class Annotation(models.Model):
         "agents.Chunk", null=True, blank=True,
         related_name="annotations", on_delete=models.SET_NULL
     )
+    confidence = models.FloatField(null=True, blank=True)  # 0.0–1.0 (agent annotations)
     
-    # Content
-    annotation_type = models.CharField(max_length=30, choices=[
-        # AI flag types
-        ("gap", "Logical Gap"),
-        ("error", "Potential Error"),
-        ("handwave", "Handwaving"),
-        ("unclear", "Unclear"),
-        ("assumption", "Unverified Assumption"),
-        ("info", "Informational Note"),
-        # Human flag types
-        ("comment", "Comment"),
-        ("checked", "Checked / Verified"),
-        ("needs_review", "Needs Review"),
-        ("logic_mistake", "Logic Mistake"),
-    ])
-    severity = models.CharField(max_length=20, choices=[
-        ("info", "Info"),
-        ("warning", "Warning"),
-        ("error", "Error"),
-    ], default="info")
-    message = models.TextField()
-    
-    # AI metadata
-    confidence = models.FloatField(null=True, blank=True)  # 0.0–1.0
-    
-    # Human metadata
+    # Lifecycle (semantics are category-dependent — see annotation-model-spec-v2 §2.3)
     resolved = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.CharField(max_length=200, blank=True)
+    
+    # Linked annotations (symmetric, untyped M2M)
+    related_annotations = models.ManyToManyField("self", blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ["block_id", "created_at"]
+        ordering = ["start_block", "created_at"]
 ```
+
+**Category and tag overview** (see `notes/annotation-model-spec-v2.md` for full definitions):
+
+| Category | Example tags | Severity |
+|---|---|---|
+| `check` | `manual_review`, `agent_review`, `formalization`, `experiment`, `example_check`, `cross_reference` | n/a |
+| `info` | `summary`, `reference`, `remark`, `expanded_argument` | n/a |
+| `issue` | `typo`, `gap`, `handwaving`, `incomplete_argument`, `assumption_mismatch`, `calculation_error`, `notation_conflict`, `false_citation` | `question` / `warning` / `error` |
+
+The `expanded_argument` info tag is used by bots to attach a detailed, step-by-step rewriting of a proof chunk. These annotations have special display behavior (see §7.2).
 
 ### 4.4 Chunk
 
-Persists the logical chunks produced by an agent run. This is where `expanded_argument` lives — chunks group blocks into logical steps and carry the AI's detailed analysis. Annotations link back to their parent chunk via a foreign key.
+Persists the logical chunks produced by a bot run. Chunks group blocks into logical steps and carry the bot's structural analysis (summary, confidence). Annotations (including `expanded_argument` info annotations) link back to their parent chunk via a foreign key.
 
 ```python
 class Chunk(models.Model):
@@ -457,10 +458,11 @@ class Chunk(models.Model):
     # Which blocks this chunk covers
     source_block_ids = models.JSONField()  # ["p3", "p4", "p5"]
     
-    # Agent analysis
+    # Analysis
     summary = models.TextField()
-    expanded_argument = models.TextField(blank=True)  # Detailed version filling logical leaps
     confidence = models.FloatField()  # 0.0–1.0
+    # Note: expanded arguments are stored as info annotations (tag "expanded_argument")
+    # linked to this chunk via the Annotation.chunk FK, not as a field on Chunk.
     
     # Ordering (within the agent run's output)
     order = models.PositiveIntegerField()
@@ -469,7 +471,7 @@ class Chunk(models.Model):
         ordering = ["order"]
 ```
 
-The "Expand argument" UI feature reads `expanded_argument` from the Chunk, not from individual Annotations. This correctly models the agent output: chunks are logical units of the proof, and the expanded argument fills gaps across the entire chunk, not per-flag.
+Expanded arguments are modeled as `info` annotations with the `expanded_argument` tag, linked to their parent chunk. Each chunk typically gets one such annotation, anchored to the chunk's block range. Display behavior is described in §7.2.
 
 ### 4.5 AgentRun
 
@@ -480,7 +482,7 @@ class AgentRun(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     document = models.ForeignKey(Document, related_name="agent_runs", on_delete=models.CASCADE)
     
-    agent_type = models.CharField(max_length=50)  # e.g. "global_annotator"
+    agent_type = models.CharField(max_length=50)  # e.g. "global_annotator_bot"
     status = models.CharField(max_length=20, choices=[
         ("pending", "Pending"),
         ("running", "Running"),
@@ -489,12 +491,15 @@ class AgentRun(models.Model):
     ])
     
     # Configuration
-    model = models.CharField(max_length=100)  # e.g. "claude-sonnet-4-6"
+    model = models.CharField(max_length=100)  # e.g. "gpt-5.4"
     preset = models.CharField(max_length=20)  # Which preset triggered this
-    config = models.JSONField(default=dict)  # Additional agent config
+    config = models.JSONField(default=dict)  # Bot config: reasoning_effort, steering_prompt, options
+    
+    # External API tracking
+    openai_response_id = models.CharField(max_length=100, blank=True)  # For polling background responses
     
     # Results
-    raw_output = models.JSONField(null=True, blank=True)  # Full agent response
+    raw_output = models.JSONField(null=True, blank=True)  # Full bot response (BotOutput JSON)
     error_message = models.TextField(blank=True)
     
     # Cost tracking
@@ -539,25 +544,25 @@ class ChatMessage(models.Model):
 
 ---
 
-## 5. Agent Contract
+## 5. Bot Contract
 
-### 5.1 Standard Agent Interface
+Bots are the pluggable AI agents in ProofLint. Each bot type follows a naming convention: `GlobalAnnotatorBot`, `LiteratureBot`, `LeanBot`, `ChunkBot`, etc. All bots conform to the same input/output contract so the system doesn't care how a bot produces its output, only that the shapes match.
 
-All agents conform to the same input/output contract. This makes agents pluggable: the system doesn't care how an agent produces its output, only that the shapes match.
+### 5.1 Standard Bot Interface
 
-**Agent Input:**
+**Bot Input:**
 
 ```python
 @dataclass
-class AgentInput:
+class BotInput:
     # The document fragment to analyze (expanded macros)
     fragments: list[FragmentBlock]
     
     # Context built by the preprocessing pass
     context: ContextSlice
     
-    # Agent configuration
-    config: AgentConfig
+    # Bot configuration
+    config: BotConfig
 
 
 @dataclass
@@ -589,25 +594,37 @@ class ContextSlice:
 
 
 @dataclass
-class AgentConfig:
-    model: str                 # LLM model to use
-    temperature: float         # Default 0.2 for analytical tasks
-    max_tokens: int
-    effort: str                # "triage" or "audit"
+class BotConfig:
+    model: str                 # LLM model to use (default: "gpt-5.4")
+    reasoning_effort: str      # "low", "medium", "high", "xhigh" (default: "xhigh")
+    preset: str                # "triage" or "audit"
+    
+    # Steering — user-provided instructions that shape the bot's focus
+    steering_prompt: str       # e.g. "Focus on Lemma 1", "Ignore small typos"
+    
+    # Bot-specific options (varies by bot type)
+    options: dict              # e.g. {"produce_checks": True}
+    
+    # Note: temperature is NOT configurable — it is rejected by the OpenAI
+    # Responses API when reasoning_effort > "none". max_output_tokens is left
+    # at the model default (128k for gpt-5.4) to avoid truncating reasoning.
 ```
 
-**Agent Output:**
+**Bot Output:**
 
 ```python
 @dataclass
-class AgentOutput:
+class BotOutput:
     # Structural summary
     summary: str               # Overall summary of the analyzed section
     
     # Chunks: logical groupings of blocks
     chunks: list[AnnotatedChunk]
     
-    # Overall confidence (how confident the agent is in its analysis)
+    # Annotations produced by this bot (v2 schema)
+    annotations: list[BotAnnotation]
+    
+    # Overall confidence (how confident the bot is in its analysis)
     overall_confidence: float  # 0.0–1.0
     
     # Raw metadata for debugging
@@ -621,26 +638,43 @@ class AnnotatedChunk:
     chunk_id: str              # e.g. "chunk_1"
     source_ids: list[str]      # Block IDs this chunk covers: ["p3", "p4"]
     summary: str               # What this chunk does logically
-    
-    flags: list[Flag]
     confidence: float          # Per-chunk confidence
-    
-    # Optional: expanded argument (fills logical leaps)
-    expanded_argument: str     # Detailed version with all steps explicit
 
 
 @dataclass
-class Flag:
-    anchor: str                # Block or sentence ID: "p3" or "p3.s2"
-    severity: str              # "info", "warning", "error"
-    flag_type: str             # "gap", "error", "handwave", "unclear", "assumption"
-    message: str               # Human-readable explanation
-    confidence: float          # How confident the agent is in this flag
+class BotAnnotation:
+    """Matches the Annotation v2 creation shape. The backend maps this
+    directly to Annotation objects, filling in provenance fields
+    (source='agent', author=bot_name, agent_run, chunk)."""
+    
+    # Anchor
+    start_block: str           # e.g. "p3"
+    end_block: str             # e.g. "p3" (same for single-block)
+    
+    # Content
+    category: str              # "check", "info", or "issue"
+    tags: list[str]            # e.g. ["gap"], ["expanded_argument"], ["agent_review"]
+    severity: str              # "question", "warning", "error" (required for issues; empty otherwise)
+    body: str                  # Human-readable explanation
+    confidence: float          # How confident the bot is in this annotation
+    
+    # Grouping — which chunk this annotation belongs to
+    chunk_id: str              # References AnnotatedChunk.chunk_id
 ```
 
-### 5.2 GlobalAnnotator (MVP Agent)
+### 5.2 GlobalAnnotatorBot (MVP Bot)
 
-The GlobalAnnotator is the single agent in MVP. It takes the full document (1–2 pages), analyzes it in one pass, and returns the complete annotation set.
+The GlobalAnnotatorBot is the first bot in MVP. It takes the full document (1–2 pages), analyzes it in one pass, and returns chunks, annotations, and optionally expanded arguments.
+
+**Invocation UX:** The user invokes GlobalAnnotatorBot via a button or menu action. This opens a **wizard dialog** with:
+
+- **Produce checks** toggle — whether the bot should mark blocks it considers sound (`check` / `agent_review`). Default: off.
+- **Steering prompt** — optional free-text instructions (e.g. "Focus on Lemma 1", "Ignore small typos and presentation issues", "Pay special attention to the induction step").
+- **Model selector** — which LLM model to use. Default: `gpt-5.4`.
+- **Reasoning effort** — dropdown: low / medium / high / xhigh. Default: `xhigh`.
+- **Run** button — starts the bot. The dialog closes and a persistent status indicator appears (see §9 for long-running call UX).
+
+If the user has selected blocks before invoking the bot, the wizard pre-fills a scope restriction (analyze only the selected range). The full document context is still provided for reference.
 
 **Behavior:**
 
@@ -648,10 +682,12 @@ The GlobalAnnotator is the single agent in MVP. It takes the full document (1–
 2. Chunk the argument into logical units (may group multiple blocks into one chunk)
 3. For each chunk:
    - Summarize what it accomplishes
-   - Identify flags: gaps, errors, handwaving, unclear points, unverified assumptions
-   - Assign severity and confidence per flag
-   - Generate an "expanded argument" that fills logical leaps
+   - Produce `issue` annotations for problems found (using appropriate tags: `gap`, `handwaving`, `incomplete_argument`, `assumption_mismatch`, `calculation_error`, etc.)
+   - Produce `info` / `remark` annotations for noteworthy observations
+   - Produce `info` / `expanded_argument` annotations with a step-by-step rewriting of the chunk's logic (one per chunk, anchored to the chunk's block range)
+   - If checks enabled: produce `check` / `agent_review` annotations for blocks the bot considers sound
 4. Produce an overall summary and confidence indicator
+5. Apply the steering prompt to adjust focus, depth, and which kinds of findings to suppress or emphasize
 
 **Prompt structure** (simplified):
 
@@ -668,23 +704,37 @@ REFERENCED RESULTS:
 DOCUMENT:
 {fragments formatted with block IDs as markers}
 
+{steering_prompt, if provided}
+
 Produce a JSON response with the following structure:
-{output schema}
+{BotOutput schema}
 
 Guidelines:
 - Chunk the argument into logical steps (not necessarily one per paragraph)
-- Flag genuine issues, not stylistic preferences
-- "Handwave" flags are for steps claimed to be obvious/trivial that aren't
-- "Gap" flags are for missing logical steps that a reader must fill
-- "Error" flags are for statements that appear incorrect
-- Confidence reflects how sure you are about each flag (not the proof's correctness)
-- The expanded_argument should make every logical step explicit
+- For each issue, choose the most specific tag:
+  - "gap": a genuinely missing step — a real hole in the logic
+  - "handwaving": too vague to identify what concrete step is being skipped
+  - "incomplete_argument": skipped steps that are plausibly fillable
+  - "assumption_mismatch": a result applied in the wrong context
+  - "calculation_error": sign error, forgotten term, wrong inequality direction
+  - "typo": spelling, grammar, or obvious notational slip
+- Severity reflects impact: "question" (unsure), "warning" (real but fixable), "error" (may invalidate argument)
+- Confidence reflects how sure you are about each annotation (not the proof's correctness)
+- For each chunk, produce an expanded_argument annotation that makes every logical step explicit
 - The summary should help a reader understand the proof's structure
+{if produce_checks: "- Mark blocks you consider sound with category 'check', tag 'agent_review'"}
 ```
 
-**Model selection:** The agent is configured with a model parameter. Default for Triage: `claude-sonnet-4-6`. Users can override to use more capable models (e.g., `claude-opus-4-6`) at higher cost.
+**Model selection:** Configured via the wizard. Default: `gpt-5.4` with `reasoning_effort: "xhigh"`. This combination produces the highest-quality analysis but calls typically take **30–50 minutes** via the OpenAI Responses API in background mode. Users can lower reasoning effort for faster (but shallower) results. Alternative models (e.g., Claude Sonnet/Opus via Anthropic API) can be supported as a future extension.
 
-**Output parsing:** The agent returns structured JSON. The backend parses it, creates `Annotation` objects for each flag, and stores the raw output in `AgentRun.raw_output` for debugging.
+**Structured output:** The bot prompt requests JSON via `text.format` with `type: "json_schema"` and `strict: true`, providing the `BotOutput` schema. This guarantees valid, schema-conforming JSON output from the model. No best-effort parsing or retry logic is needed for structural validity — only semantic validation (e.g., checking that referenced block IDs exist).
+
+**Output parsing:** The backend validates and maps each `BotAnnotation` to an `Annotation` object (filling `source='agent'`, `author='GlobalAnnotatorBot'`, `agent_run`, `chunk` FK). The raw output is stored in `AgentRun.raw_output` for debugging.
+
+**Prompting notes for reasoning models:**
+- Do NOT include chain-of-thought instructions ("think step by step") — the model reasons internally via its reasoning tokens.
+- Keep the prompt direct: state the goal, provide the document, specify the output schema.
+- The steering prompt from the wizard is appended verbatim as a `USER INSTRUCTIONS` section.
 
 ### 5.3 Context Slice Construction
 
@@ -694,7 +744,7 @@ Before calling any agent, the backend builds a `ContextSlice` by processing the 
 2. **Theorem/definition index**: From `Document.structure.theorem_index` and `definition_index`. For each, include the ID, type, and a short statement.
 3. **Section path**: Walk the block hierarchy to determine which section the requested fragment lives in.
 
-For the GlobalAnnotator (which gets the full document), the context slice includes all definitions and theorems. For future agents that work on fragments, only relevant entries are included — "relevant" meaning: explicitly referenced via `\ref`/`\label`, or defined in a preceding section.
+For the GlobalAnnotatorBot (which gets the full document), the context slice includes all definitions and theorems. For future bots that work on fragments, only relevant entries are included — "relevant" meaning: explicitly referenced via `\ref`/`\label`, or defined in a preceding section.
 
 ---
 
@@ -776,8 +826,9 @@ Response (200):
 
 Query parameters:
 - `?source=human` or `?source=agent` — filter by source
-- `?severity=warning,error` — filter by severity
-- `?block_id=p3` — filter by block
+- `?category=issue` or `?category=check,info` — filter by category
+- `?severity=warning,error` — filter by severity (issues only)
+- `?block_id=p3` — filter by block (matches annotations whose span contains this block, i.e. `start_block <= p3 <= end_block` in document order)
 
 ```
 Response (200):
@@ -785,15 +836,21 @@ Response (200):
     "annotations": [
         {
             "id": "uuid",
-            "block_id": "p3",
-            "sentence_id": "p3.s2",
-            "source": "agent",
-            "annotation_type": "gap",
+            "start_block": "p3",
+            "end_block": "p3",
+            "start_offset": 0,
+            "end_offset": 142,
+            "anchor_quote": "",
+            "category": "issue",
+            "tags": ["gap"],
             "severity": "warning",
-            "message": "Finiteness assumption used but not justified.",
-            "expanded_argument": "",
+            "body": "Finiteness assumption used but not justified.",
+            "metadata": {},
+            "source": "agent",
+            "author": "GlobalAnnotatorBot",
             "confidence": 0.75,
             "resolved": false,
+            "related_annotations": [],
             "created_at": "..."
         }
     ]
@@ -805,43 +862,50 @@ Response (200):
 ```
 Request:
 {
-    "block_id": "p5",
-    "sentence_id": "p5.s1",        // optional
-    "annotation_type": "comment",
-    "severity": "info",
-    "message": "I think this step also needs the compactness lemma."
+    "start_block": "p5",
+    "end_block": "p5",
+    "category": "issue",
+    "tags": ["incomplete_argument"],
+    "severity": "question",
+    "body": "I think this step also needs the compactness lemma."
 }
 ```
 
-**`PATCH /api/v1/documents/{id}/annotations/{ann_id}/`** — Update (e.g., mark as resolved).
+`end_block` defaults to `start_block` if omitted. `start_offset` defaults to `0`, `end_offset` defaults to the block's content length (i.e. full-block span). `author` defaults to `"Human"` (MVP has no user accounts; post-MVP this will come from the authenticated user profile).
+
+**`PATCH /api/v1/documents/{id}/annotations/{ann_id}/`** — Update (e.g., mark as resolved, edit body).
 
 **`DELETE /api/v1/documents/{id}/annotations/{ann_id}/`** — Delete a human annotation.
 
-### 6.3 Agents
+### 6.3 Bots
 
-**`POST /api/v1/documents/{id}/agents/run/`** — Trigger an agent run.
+**`POST /api/v1/documents/{id}/agents/run/`** — Trigger a bot run.
 
 ```
 Request:
 {
-    "agent_type": "global_annotator",
+    "agent_type": "global_annotator_bot",
     "config": {
-        "model": "claude-sonnet-4-6",    // optional override
-        "temperature": 0.2               // optional override
+        "model": "gpt-5.4",             // optional override (default from settings)
+        "reasoning_effort": "xhigh",     // optional override
+        "steering_prompt": "Focus on the induction step, ignore typos",
+        "options": {
+            "produce_checks": false
+        }
     }
 }
 
 Response (202):
 {
     "run_id": "uuid",
-    "agent_type": "global_annotator",
+    "agent_type": "global_annotator_bot",
     "status": "pending"
 }
 ```
 
-The agent runs asynchronously. The frontend polls for status or uses WebSocket (post-MVP).
+The bot runs asynchronously. The frontend polls for status or uses WebSocket (post-MVP).
 
-**`GET /api/v1/documents/{id}/agents/runs/`** — List all agent runs for a document.
+**`GET /api/v1/documents/{id}/agents/runs/`** — List all bot runs for a document.
 
 **`GET /api/v1/documents/{id}/agents/runs/{run_id}/`** — Get status and results of a specific run.
 
@@ -849,11 +913,12 @@ The agent runs asynchronously. The frontend polls for status or uses WebSocket (
 Response (200):
 {
     "run_id": "uuid",
-    "agent_type": "global_annotator",
+    "agent_type": "global_annotator_bot",
     "status": "completed",
     "summary": "The argument proves that every admissible graph has...",
     "chunks": [...],
     "overall_confidence": 0.7,
+    "annotation_count": 5,
     "input_tokens": 2500,
     "output_tokens": 1800,
     "started_at": "...",
@@ -880,7 +945,7 @@ Response (200):  // streamed via SSE for real-time output
     "id": "uuid",
     "role": "assistant",
     "content": "The induction hypothesis applies here because ...",
-    "model": "claude-sonnet-4-6",
+    "model": "gpt-5.4",
     "input_tokens": 1200,
     "output_tokens": 450
 }
@@ -914,7 +979,7 @@ Refer to specific parts of the document by their IDs when relevant.
 
 **`GET /api/v1/documents/{id}/summary/`** — Get the structural summary.
 
-Returns the chunk summaries from the most recent completed GlobalAnnotator run, formatted for the sidebar.
+Returns the chunk summaries from the most recent completed GlobalAnnotatorBot run, formatted for the sidebar.
 
 ```
 Response (200):
@@ -925,13 +990,13 @@ Response (200):
             "chunk_id": "chunk_1",
             "source_ids": ["p1", "p2", "def1"],
             "summary": "Defines admissible graphs and states main theorem.",
-            "flags_count": {"info": 0, "warning": 1, "error": 0}
+            "annotation_counts": {"check": 0, "info": 1, "issue": 1}
         },
         {
             "chunk_id": "chunk_2",
             "source_ids": ["p3", "p4", "lem1", "pf1"],
             "summary": "Proves the deletion lemma for admissible graphs.",
-            "flags_count": {"info": 1, "warning": 0, "error": 0}
+            "annotation_counts": {"check": 0, "info": 2, "issue": 0}
         }
     ],
     "overall_confidence": 0.7,
@@ -978,20 +1043,23 @@ The central panel renders the document with:
 - **MathJax 3** for inline and display math
 - **Block-level elements** as distinct DOM nodes with `data-block-id` attributes
 - **Sentence-level spans** within paragraphs with `data-sentence-id` attributes
-- **Color-coded backgrounds** based on annotation severity:
+- **Color-coded backgrounds** based on annotation category (see §7.8 Color Scheme):
   - No annotations: no background
+  - Check only: green tint (darker for human, lighter for agent)
   - Info only: faint blue left border
-  - Warning: light yellow background
-  - Error: light red background
-- **Flag indicators**: Small icons in the left margin at flagged locations. Click to scroll the annotation panel to the relevant flag.
+  - Issue: yellow (question), orange (warning), or red (error)
+  - When multiple categories are present, issue takes visual priority
 - **Theorem/proof environments** rendered with standard mathematical styling (bold "Theorem 1.", italic body, etc.)
-- **"Expand argument" button** on chunks that have an `expanded_argument`: clicking it shows the AI's detailed version inline, diff-style (post-MVP: actual diff view; MVP: expandable section below the original).
+- **Expanded argument toggles**: Chunks that have an `expanded_argument` annotation show a small chevron (▸/▾). Clicking expands the bot's step-by-step rewriting below the chunk text. A global **View > Expanded Arguments** menu provides:
+  - Show all expanded arguments
+  - Hide all expanded arguments
+  - Display mode: "Below text" (default) or "Annotation column" (shows as a regular info annotation)
 - **Text selection**: Users can select text, which enables:
   - A floating toolbar: "Annotate", "Ask about this", "Explain"
   - "Annotate" opens a form in the annotation panel
   - "Ask about this" / "Explain" switches to the chat panel with the selection as context
 
-**Click-to-select**: Clicking a paragraph highlights it and scrolls the annotation panel to show its annotations. The summary sidebar highlights the corresponding chunk.
+**Click-to-select**: Clicking a block highlights it and scrolls the annotation panel to show its annotations. Shift-clicking extends to a multi-block range. The summary sidebar highlights the corresponding chunk.
 
 ### 7.3 Summary Sidebar
 
@@ -1008,22 +1076,27 @@ The sidebar only populates after a GlobalAnnotator run completes. In Manual mode
 
 ### 7.4 Annotation Panel
 
-Right panel (default view) showing all flags and comments:
+Right panel (default view) showing annotations grouped by block position:
 
-- **Tabs or filter**: "All", "AI Flags", "My Annotations"
-- **Severity filter**: Toggle info/warning/error visibility
-- **Flag cards**: Each shows:
-  - Severity icon + color
-  - Anchor reference (clickable → scrolls document reader)
-  - Type label ("Gap", "Handwave", etc.)
-  - Message text
-  - Confidence indicator (for AI flags)
-  - "Resolve" checkbox
-- **Human annotation form**: When user selects "Annotate" from the floating toolbar, a form appears here:
-  - Type selector (Comment, Checked, Needs Review, Logic Mistake)
-  - Severity selector
-  - Free text input
+- **Category visibility toggles**: Check / Info / Issue — toggle which categories are shown
+- **Source filter**: "All", "Bot", "Human"
+- **Annotation cards**: Each shows:
+  - Category icon + color (see §7.8)
+  - Tag chips as small badges (display labels derived from slugs)
+  - Severity badge (issues only: question/warning/error)
+  - Author + timestamp
+  - Body text (click to edit; supports Markdown + LaTeX rendering)
+  - Confidence indicator (for bot annotations)
+  - Action button: "Resolve" (issue) / "Revoke" (check) / "Archive" (info)
+- **SVG connector lines**: S-curve dot connector for single-block annotations; bracket connector spanning blocks for multi-block annotations
+- **Human annotation form**: When the user selects block(s) and clicks "Annotate", a form appears:
+  - Category selector (Check / Info / Issue)
+  - Tag checkboxes (filtered by selected category)
+  - Severity selector (if Issue)
+  - Free text body
   - Save / Cancel
+
+Note: `expanded_argument` annotations are hidden from this panel by default (they display inline in the reader — see §7.2). The "Annotation column" display mode in View options moves them here.
 
 ### 7.5 Chat Panel
 
@@ -1045,23 +1118,55 @@ Right panel (toggled from annotation view, or switched via tab):
 2. Submit → backend ingests → redirect to document view
 3. If Triage preset: agent status shown in status bar, annotations appear when ready
 
-### 7.7 Zustand Stores
+### 7.7 Bot Wizard Dialog
+
+When the user invokes a bot (via toolbar button or menu), a wizard dialog opens. The wizard is bot-specific but shares common structure:
+
+1. **Header**: Bot name + short description
+2. **Scope indicator**: If blocks are selected, shows "Analyzing blocks p3–p7" with an option to clear (→ full document)
+3. **Bot-specific options**: Checkboxes/toggles (e.g. "Produce checks" for GlobalAnnotatorBot)
+4. **Steering prompt**: Free-text field for user instructions
+5. **Model selector**: Dropdown with available models (from Settings). Default: `gpt-5.4`
+6. **Reasoning effort**: Dropdown (low / medium / high / xhigh). Default: `xhigh`. A note below: "xhigh typically takes 30–50 minutes"
+7. **Run button**: Starts the bot, closes the wizard, shows persistent status indicator in the status bar (see §9.3)
+
+### 7.8 Color Scheme
+
+Colors are determined by annotation **category** (and severity for issues):
+
+| Category | Condition      | Background / accent |
+|----------|----------------|---------------------|
+| check    | source=human   | Dark green (#e6f4ea) |
+| check    | source=agent   | Light green (#f0faf0) |
+| info     | Any            | Blue (#e8f0fe / border #5b9bd5) |
+| issue    | question       | Yellow (#fff8e1) |
+| issue    | warning        | Orange (#fff3e0) |
+| issue    | error          | Red (#fff0f0) |
+
+When a block has annotations from multiple categories, Issue takes visual priority over Check (unresolved problems should not be hidden behind green).
+
+### 7.9 Zustand Stores
 
 ```typescript
 // stores/documentStore.ts
 interface DocumentStore {
-    document: Document | null
+    documents: Document[]
+    currentDocument: Document | null
     blocks: Block[]
     loading: boolean
+    error: string | null
     
+    fetchDocuments: () => Promise<void>
     fetchDocument: (id: string) => Promise<void>
-    fetchBlocks: (id: string) => Promise<void>
+    fetchBlocks: (docId: string) => Promise<void>
+    createDocument: (source: string, sourceFormat: string, title: string, preset: string) => Promise<void>
+    deleteDocument: (id: string) => Promise<void>
 }
 
 // stores/annotationStore.ts
 interface AnnotationStore {
     annotations: Annotation[]
-    filters: { source: string[], severity: string[] }
+    filters: { source: string[], severity: string[], category: string[] }
     
     fetchAnnotations: (docId: string) => Promise<void>
     createAnnotation: (docId: string, data: CreateAnnotation) => Promise<void>
@@ -1085,12 +1190,16 @@ interface ChatStore {
 // stores/uiStore.ts
 interface UIStore {
     rightPanel: 'annotations' | 'chat'
-    activeBlockId: string | null
+    activeBlockIds: string[]          // Supports multi-block selection
+    anchorBlockId: string | null      // For shift-extend selection
     activeChunkId: string | null
+    sidebarCollapsed: boolean
     
     setRightPanel: (panel: 'annotations' | 'chat') => void
-    setActiveBlock: (blockId: string | null) => void
+    setActiveBlock: (blockId: string) => void
+    setBlockRange: (fromId: string, toId: string, orderedIds: string[]) => void
     setActiveChunk: (chunkId: string | null) => void
+    toggleSidebar: () => void
 }
 ```
 
@@ -1175,18 +1284,18 @@ Pandoc is installed in the backend container. It's a single binary, ~100 MB.
 
 ```
 # Required
-ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 DJANGO_SECRET_KEY=change-me-in-production
 
 # Optional
-OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 DATABASE_URL=postgres://prooflint:prooflint_dev@localhost:5432/prooflint
 DEBUG=true
 ALLOWED_HOSTS=localhost,127.0.0.1
 
-# Agent defaults
-DEFAULT_MODEL=claude-sonnet-4-6
-DEFAULT_TEMPERATURE=0.2
+# Bot defaults
+DEFAULT_MODEL=gpt-5.4
+DEFAULT_REASONING_EFFORT=xhigh
 ```
 
 ### 8.4 User Setup (End Users)
@@ -1263,7 +1372,7 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "dj-database-url>=2.0",
     "panflute>=2.3",
-    "httpx>=0.27",
+    "openai>=1.60",
     "anthropic>=0.40",
     "python-dotenv>=1.0",
 ]
@@ -1302,91 +1411,164 @@ dev = [
 
 ---
 
-## 9. Async Agent Execution
+## 9. Async Bot Execution
 
-Agents (especially the GlobalAnnotator) can take 10–30 seconds. The MVP uses a simple async pattern:
+Bot calls — especially GlobalAnnotatorBot with `gpt-5.4` at `reasoning_effort: "xhigh"` — are **long-running operations** that typically take **30���50 minutes**. The architecture uses two-tier async polling: the backend polls OpenAI, the frontend polls the backend.
 
 ### 9.1 Execution Flow
 
+```
+Frontend                    Backend                     OpenAI Responses API
+   │                           │                              │
+   │ POST /agents/run/         │                              │
+   │──────────────────────────>│                              │
+   │  {run_id, status:pending} │                              │
+   │<──────────────────────────│                              │
+   │                           │ POST /v1/responses           │
+   │                           │ {background:true, store:true}│
+   │                           │─────────────���───────────────>│
+   │                           │ {resp_id, status:queued}     │
+   │                           │<─────────────────────────────│
+   │                           │                              │
+   │ GET /agents/runs/{id}/    │                              │
+   │──────────────────────────>│ GET /v1/responses/{resp_id}  │
+   │  (every 15s)              │─────────────────────────────>│
+   │                           │  (every 10s)                 │
+   │  {status:running,         │                              │
+   │   elapsed: "12m 34s"}     │                              │
+   │<──────────────────────────│                              │
+   │         ...               │         ...                  │
+   ���                           │ {status:completed, output}   │
+   │                           │<───────────────���─────────────│
+   │                           │ → parse BotOutput            │
+   │                           │ → create Annotations, Chunks │
+   │                           │ → update AgentRun status     │
+   │ GET /agents/runs/{id}/    │                              │
+   │──────────────────────────>│                              │
+   │  {status:completed, ...}  │                              │
+   │<──────────────────────────│                              │
+```
+
+**Detailed steps:**
+
 1. `POST /api/v1/documents/{id}/agents/run/` creates an `AgentRun` with status `pending`
-2. Backend launches the agent in a background thread (Django's `threading.Thread` for MVP; migrate to Celery/task queue for production)
-3. The thread:
-   - Updates status to `running`
-   - Builds the `AgentInput` (context slice, fragments)
-   - Calls the LLM API
-   - Parses the response into `AgentOutput`
-   - Creates `Annotation` objects for each flag
-   - Updates status to `completed` (or `failed`)
-4. Frontend polls `GET /agents/runs/{run_id}/` every 2 seconds while status is `pending` or `running`
+2. Backend launches a background thread that:
+   - Updates `AgentRun` status to `running`, records `started_at`
+   - Builds the `BotInput` (context slice, fragments)
+   - Calls the **OpenAI Responses API** with `background: true` and `store: true`:
+     ```python
+     resp = openai_client.responses.create(
+         model=config.model,              # "gpt-5.4"
+         instructions=system_prompt,
+         input=user_prompt,
+         reasoning={"effort": config.reasoning_effort, "summary": "auto"},
+         text={"format": {"type": "json_schema", "name": "bot_output",
+                          "strict": True, "schema": BOT_OUTPUT_SCHEMA}},
+         background=True,
+         store=True,
+     )
+     # Returns immediately with resp.status == "queued"
+     ```
+   - Stores `resp.id` in `AgentRun.raw_output["openai_response_id"]`
+   - **Polls OpenAI** every 10 seconds until terminal state:
+     ```python
+     while resp.status in ("queued", "in_progress"):
+         time.sleep(10)
+         resp = openai_client.responses.retrieve(resp.id)
+         # Update AgentRun.raw_output with elapsed time for frontend display
+     ```
+   - On completion: parses `resp.output_text` as `BotOutput`, creates `Annotation` and `Chunk` objects, updates `AgentRun` status to `completed`
+   - On failure or timeout: updates status to `failed` with error message
+3. Frontend polls `GET /agents/runs/{run_id}/` every **15 seconds** while status is `pending` or `running`
 
-### 9.2 Post-MVP: WebSocket
+### 9.2 Timeouts and Error Handling
 
-Replace polling with a WebSocket connection per document session. The backend pushes:
-- Agent status changes
-- New annotations as they're created
+| Concern | Value | Rationale |
+|---|---|---|
+| Backend → OpenAI poll timeout | **70 minutes** | Hard ceiling to avoid indefinite hangs; allows full xhigh reasoning runs (typically 30–50 min) with margin |
+| Frontend → Backend poll interval | **15 seconds** | Frequent enough for responsive UX, light on local network |
+| Backend → OpenAI poll interval | **10 seconds** | OpenAI background responses update status asynchronously |
+| `max_output_tokens` | **Not set** (model default: 128k) | Setting this too low truncates reasoning tokens with no visible output; the model manages its budget internally |
+| `temperature` | **Not configurable** | Rejected by OpenAI API when `reasoning_effort > "none"` |
+
+**Failure modes:**
+- OpenAI returns `status: "failed"` → `AgentRun` marked failed, error shown in UI
+- 70-minute timeout exceeded → `AgentRun` marked failed with timeout message
+- OpenAI response stuck in `"queued"` (known API issue) → caught by timeout; user can cancel and retry
+- Network error during polling → retry with exponential backoff (3 retries), then fail
+
+**Cancellation:** The user can cancel a running bot from the UI. Backend calls `openai_client.responses.cancel(resp_id)` (idempotent) and marks the `AgentRun` as `failed` with reason `"cancelled"`.
+
+### 9.3 Frontend UX for Long-Running Calls
+
+Since bot calls take 30–50 minutes, the UI must not block the user or lose state:
+
+- **Persistent status indicator** in the status bar: shows bot name, elapsed time ("GlobalAnnotatorBot — running 12m 34s"), and a cancel button. Visible on all views (document list, document view, settings).
+- **Navigate freely**: The user can browse other documents, create annotations manually, or close and reopen the browser tab. The `AgentRun` record in the database is the source of truth — the frontend reconstructs status on page load.
+- **Completion notification**: When the frontend poll detects `status: "completed"`, show a toast notification ("GlobalAnnotatorBot finished — 3 issues found, 2 expanded arguments generated") with a link to view results. If the user is already viewing the document, annotations appear automatically.
+- **No spinner or modal**: A 30-minute spinner would be hostile UX. The status bar indicator is unobtrusive.
+
+### 9.4 Post-MVP: WebSocket + Server-Sent Events
+
+Replace frontend polling with a persistent connection per session. The backend pushes:
+- Bot run status changes (with elapsed time)
+- Completion notification with summary
 - Chat message streaming
 
-This is explicitly out of MVP scope — polling works fine for a single-user local tool.
+This is out of MVP scope — polling every 15 seconds works fine for a single-user local tool.
 
 ---
 
 ## 10. Implementation Roadmap
 
-### Phase 1: Skeleton (Week 1)
-- [ ] Create GitHub repo with project structure
-- [ ] Django project + apps scaffolding (documents, annotations, agents)
-- [ ] React + Vite + TypeScript scaffolding
-- [ ] Docker Compose with Postgres
-- [ ] Data models + migrations
-- [ ] Basic REST endpoints (CRUD for documents)
-- [ ] Simple frontend: upload form, document list
+### Phase 1: Skeleton — DONE
+- [x] Project structure, Django apps (documents, annotations, agents), React + Vite + TS
+- [x] Data models + migrations (including Annotation v2 schema)
+- [x] Basic REST endpoints (CRUD for documents, annotations, agent runs)
+- [x] Upload form, document list
 
-### Phase 2: Ingestion Pipeline (Week 2)
-- [ ] Pandoc integration: LaTeX/Markdown → AST
-- [ ] Panflute filter: AST → blocks with IDs
-- [ ] Macro extraction and expansion
-- [ ] Sentence splitting (math-aware)
-- [ ] Store blocks in DB
-- [ ] API: blocks endpoint
-- [ ] Frontend: render blocks with MathJax 3
+### Phase 2: Ingestion Pipeline — DONE
+- [x] Pandoc integration: LaTeX/Markdown → AST via panflute
+- [x] Block ID assignment, environment detection, sentence splitting
+- [x] Macro extraction and expansion with source mapping
+- [x] Blocks API endpoint
+- [x] Frontend: render blocks with MathJax 3
 
-### Phase 3: Document Reader UI (Week 3)
-- [ ] Block-level rendering with data attributes
-- [ ] Color-coded backgrounds based on annotations
-- [ ] Click-to-select paragraphs
-- [ ] Text selection → floating toolbar
-- [ ] Summary sidebar (static structure for now)
-- [ ] Responsive three-panel layout
+### Phase 3: Document Reader UI + Human Annotations — DONE
+- [x] Block-level rendering with `data-block-id` attributes
+- [x] Category-based color-coded backgrounds
+- [x] Click-to-select blocks, shift-click multi-block ranges
+- [x] Annotation panel: category toggles, tag chips, severity badges, connector lines
+- [x] Human annotation CRUD (create/edit/delete with category/tags/severity/body)
+- [x] Resolve/Revoke/Archive per category
+- [x] Settings page: API key management, model selection
+- [x] Launcher script (one-command setup)
 
-### Phase 4: GlobalAnnotator Agent (Week 4)
-- [ ] Agent contract implementation (input/output dataclasses)
-- [ ] Context slice builder
-- [ ] GlobalAnnotator prompt + LLM call
-- [ ] Output parsing → Annotation objects
-- [ ] AgentRun tracking + async execution
-- [ ] Polling from frontend
-- [ ] Annotation panel: display AI flags
-- [ ] Summary sidebar: populated from agent output
-- [ ] "Expand argument" inline sections
+### Phase 4: GlobalAnnotatorBot
+- [ ] Bot contract implementation (`BotInput`/`BotOutput` dataclasses)
+- [ ] Context slice builder (notation, theorem/definition index, section path)
+- [ ] GlobalAnnotatorBot prompt + LLM call (Anthropic/OpenAI SDK)
+- [ ] Output parsing → Annotation v2 objects (category/tags/severity/body)
+- [ ] AgentRun tracking + async execution (background thread)
+- [ ] Bot wizard dialog (checks toggle, steering prompt, model selector)
+- [ ] Polling from frontend for run status
+- [ ] Summary sidebar: populated from bot chunks
+- [ ] Expanded argument display (inline chevron toggle + View menu options)
+- [ ] Triage preset auto-trigger on document creation
 
-### Phase 5: Human Annotations + Chat (Week 5)
-- [ ] Human annotation creation/editing/deletion
-- [ ] Annotation panel: filter by source/severity
-- [ ] Resolve/unresolve annotations
-- [ ] Chat backend: message storage + LLM relay
-- [ ] Chat system prompt with document context
-- [ ] Chat frontend: message list + input
+### Phase 5: Chat
+- [ ] Chat backend: LLM relay with document context in system prompt
+- [ ] Chat frontend: message list + input + context indicator
 - [ ] SSE streaming for chat responses
 - [ ] Selection → chat context integration
+- [ ] Quick actions: "Explain this", "Check this step"
 
-### Phase 6: Polish + Testing (Week 6)
-- [ ] Error handling throughout
-- [ ] Loading states and skeleton UI
-- [ ] Keyboard shortcuts (next/prev flag, toggle panels)
+### Phase 6: Polish + Testing
+- [ ] Error handling and loading states
+- [ ] Keyboard shortcuts (next/prev annotation, toggle panels)
 - [ ] Test suite: backend API tests, ingestion pipeline tests
-- [ ] Browser testing setup (Playwright — workflow experiment)
-- [ ] README, CONTRIBUTING.md, setup documentation
 - [ ] Test with real mathematical documents
+- [ ] README and setup documentation
 
 ---
 
@@ -1394,19 +1576,27 @@ This is explicitly out of MVP scope — polling works fine for a single-user loc
 
 ### Resolved
 
-1. ~~**Sentence splitting quality**~~: **Decision: implement sentence-level IDs from the start.** The rule-based math-aware splitter will make mistakes on complex prose, but having the infrastructure in place is more important than perfection. We can improve the splitter iteratively. Agents and the UI will support both block-level and sentence-level anchoring from day one.
+1. ~~**Sentence splitting quality**~~: **Decision: implement sentence-level IDs from the start.** Rule-based math-aware splitter, imperfect but sufficient. Agents and UI support both block-level and sentence-level anchoring.
 
-5. ~~**Authentication**~~: **Decision: no auth for MVP.** The tool runs locally. API keys are configured via a browser-based setup wizard on first run, stored in a local `.env` file. No login, no user accounts. DRF makes it easy to add later for a hosted version.
+2. ~~**Authentication**~~: **Decision: no auth for MVP.** Runs locally, API keys via Settings page, stored in `.env`.
+
+3. ~~**Agent output validation**~~: **Decision: best-effort parse with defaults.** Partial results indicated in UI.
+
+4. ~~**Multi-document**~~: **Decision: minimal dashboard.** Document list + upload button implemented.
+
+5. ~~**Verdict language alignment**~~: **Decision: "confidence summary" not "verdict".** No overall validity judgments, only evidence and confidence indicators.
+
+6. ~~**Annotation model**~~: **Decision: category/tags/severity model (v2).** Implemented. See `notes/annotation-model-spec-v2.md`.
+
+7. ~~**Expanded argument storage**~~: **Decision: model as Info annotations with `expanded_argument` tag.** Displayed inline by default (chevron toggle), with option to show in annotation column via View menu.
 
 ### Open
 
-2. **Chat model**: Same model as the GlobalAnnotator, or always use the most capable available? Chat benefits from stronger reasoning (explaining complex steps), but cost adds up with long conversations. Suggestion: user-configurable per document, defaulting to the same model as the agent preset.
+8. **Chat model**: Same model as the bot, or always use the most capable available? Suggestion: user-configurable per document, defaulting to the same model as the bot preset.
 
-3. **Agent output validation**: When the LLM returns JSON that doesn't match the schema (missing fields, wrong types), do we: (a) fail the run, (b) best-effort parse with defaults, (c) retry once? Suggestion: (b) for MVP with clear UI indication of partial results.
+9. **Bot rerun behavior**: When a bot is re-run on a document that already has bot annotations, should old annotations be replaced or kept alongside? Options: (a) replace all from that bot type, (b) keep both runs visible with run selector, (c) ask the user. Needs decision before implementing GlobalAnnotatorBot.
 
-4. **Multi-document**: The data model supports multiple documents. Should the MVP UI have a document list/dashboard, or just a single-document view with upload? Suggestion: minimal dashboard (list + upload button) to avoid losing documents.
-
-6. **Verdict language alignment**: The v1 vision doc says "overall validity assessment." The MVP spec says "No verdicts, only evidence." The MVP spec stance is better for expert users — should we update the v1 doc to align? Suggestion: yes, update v1 to say "confidence summary" / "review summary with confidence indicators" instead.
+10. **Expanded argument scope**: Should the bot produce one `expanded_argument` per chunk, or can it skip chunks where the argument is already explicit? Suggestion: always produce one for consistency; mark trivial ones with low confidence.
 
 ---
 
@@ -1440,7 +1630,7 @@ used on $N(v)$, so a fourth color is available for $v$.  $\square$
 | `pf1.p2` | paragraph | "**Base case.** If $n \leq 4$, ..." |
 | `pf1.p3` | paragraph | "**Inductive step.** Assume the result holds..." |
 
-**GlobalAnnotator output** (abbreviated):
+**GlobalAnnotatorBot output** (abbreviated):
 
 ```json
 {
@@ -1450,43 +1640,55 @@ used on $N(v)$, so a fourth color is available for $v$.  $\square$
             "chunk_id": "chunk_1",
             "source_ids": ["thm1"],
             "summary": "States the main theorem: Δ(G) ≤ 3 implies 4-colorable.",
-            "flags": [],
             "confidence": 0.95
         },
         {
             "chunk_id": "chunk_2",
             "source_ids": ["pf1.p1", "pf1.p2"],
             "summary": "Sets up induction and handles the base case.",
-            "flags": [
-                {
-                    "anchor": "pf1.p2",
-                    "severity": "info",
-                    "type": "handwave",
-                    "message": "'The result is immediate' — correct but could note that any graph on ≤4 vertices trivially has a proper 4-coloring by assigning distinct colors.",
-                    "confidence": 0.6
-                }
-            ],
             "confidence": 0.9
         },
         {
             "chunk_id": "chunk_3",
             "source_ids": ["pf1.p3"],
             "summary": "Inductive step: remove a low-degree vertex, color the rest, extend.",
-            "flags": [
-                {
-                    "anchor": "pf1.p3",
-                    "severity": "warning",
-                    "type": "gap",
-                    "message": "The existence of a vertex with deg(v) ≤ 3 follows from Δ(G) ≤ 3, but the argument implicitly uses that Δ(G-v) ≤ 3 still holds (which is true since deleting a vertex cannot increase degrees). This should be stated.",
-                    "confidence": 0.8
-                }
-            ],
-            "confidence": 0.75,
-            "expanded_argument": "Let v be any vertex of G. Since Δ(G) ≤ 3, we have deg(v) ≤ 3. Consider G' = G - v. For any vertex u in G', deg_{G'}(u) ≤ deg_G(u) ≤ 3, so Δ(G') ≤ 3. Since |V(G')| = n-1, the induction hypothesis gives a proper 4-coloring c of G'. Now v has at most 3 neighbors in G, so at most 3 colors from {1,2,3,4} appear on N(v). Thus at least one color is available; assign it to v. This extends c to a proper 4-coloring of G."
+            "confidence": 0.75
+        }
+    ],
+    "annotations": [
+        {
+            "start_block": "pf1.p2",
+            "end_block": "pf1.p2",
+            "category": "issue",
+            "tags": ["handwaving"],
+            "severity": "question",
+            "body": "'The result is immediate' — correct but could note that any graph on ≤4 vertices trivially has a proper 4-coloring by assigning distinct colors.",
+            "confidence": 0.6,
+            "chunk_id": "chunk_2"
+        },
+        {
+            "start_block": "pf1.p3",
+            "end_block": "pf1.p3",
+            "category": "issue",
+            "tags": ["gap"],
+            "severity": "warning",
+            "body": "The argument implicitly uses that Δ(G-v) ≤ 3 still holds after deleting v (which is true since deleting a vertex cannot increase degrees). This should be stated.",
+            "confidence": 0.8,
+            "chunk_id": "chunk_3"
+        },
+        {
+            "start_block": "pf1.p3",
+            "end_block": "pf1.p3",
+            "category": "info",
+            "tags": ["expanded_argument"],
+            "severity": "",
+            "body": "Let v be any vertex of G. Since Δ(G) ≤ 3, we have deg(v) ≤ 3. Consider G' = G - v. For any vertex u in G', deg_{G'}(u) ≤ deg_G(u) ≤ 3, so Δ(G') ≤ 3. Since |V(G')| = n-1, the induction hypothesis gives a proper 4-coloring c of G'. Now v has at most 3 neighbors in G, so at most 3 colors from {1,2,3,4} appear on N(v). Thus at least one color is available; assign it to v. This extends c to a proper 4-coloring of G.",
+            "confidence": 0.9,
+            "chunk_id": "chunk_3"
         }
     ],
     "overall_confidence": 0.8
 }
 ```
 
-**What the user sees:** The document rendered with the base case paragraph having a faint blue left border (info) and the inductive step paragraph having a light yellow background (warning). The summary sidebar shows the three chunks. The annotation panel lists the two flags. Clicking the warning flag scrolls to the inductive step and highlights it. Clicking "Expand argument" below the inductive step shows the detailed version.
+**What the user sees:** The document rendered with the base case paragraph having a yellow background (question-severity issue) and the inductive step having an orange background (warning-severity issue). The inductive step also has a ▸ chevron — clicking it reveals the expanded argument below the text. The summary sidebar shows the three chunks. The annotation panel lists the two issue annotations (the `expanded_argument` info annotation is hidden from the panel by default, displayed inline). Clicking the warning annotation scrolls to the inductive step and highlights it.

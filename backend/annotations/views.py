@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, viewsets
 
-from documents.models import Document
+from documents.models import Block, Document
 
 from .models import Annotation
 from .serializers import AnnotationCreateSerializer, AnnotationSerializer
@@ -33,11 +33,28 @@ class AnnotationViewSet(
         if category:
             qs = qs.filter(category__in=category.split(","))
 
-        # TODO: once multi-block spans exist, also match annotations where
-        # block_id falls between start_block and end_block (requires block ordering).
+        # Match annotations whose span contains the queried block.
+        # Uses block ordering to check start_block <= block_id <= end_block.
         block_id = self.request.query_params.get("block_id")
         if block_id:
-            qs = qs.filter(start_block=block_id)
+            # Build a lookup of block_id → order for this document
+            block_orders = dict(
+                Block.objects.filter(document_id=doc_id).values_list("block_id", "order")
+            )
+            target_order = block_orders.get(block_id)
+            if target_order is not None:
+                # Find annotation IDs whose span contains this block
+                matching_ids = []
+                for ann in qs:
+                    start_ord = block_orders.get(ann.start_block)
+                    end_ord = block_orders.get(ann.end_block)
+                    if start_ord is not None and end_ord is not None:
+                        if start_ord <= target_order <= end_ord:
+                            matching_ids.append(ann.pk)
+                qs = qs.filter(pk__in=matching_ids)
+            else:
+                # Unknown block_id — fall back to exact match on start_block
+                qs = qs.filter(start_block=block_id)
 
         return qs
 
