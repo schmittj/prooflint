@@ -155,11 +155,13 @@ export default function BlockRenderer({
         ...baseStyle,
         ...overlayStyle,
         cursor: "pointer",
+        position: "relative",
+        zIndex: isActive ? 2 : 1,
         borderRadius: "4px",
-        transition: "background 0.15s, outline 0.15s",
+        transition: "background 0.15s, box-shadow 0.15s",
         ...(needsCheckSpace ? { paddingRight: "28px" } : {}),
         ...(isActive
-            ? { outline: "2px solid #4a6fa5", outlineOffset: "2px" }
+            ? { boxShadow: "0 0 0 2px #4a6fa5" }
             : {}),
     };
 

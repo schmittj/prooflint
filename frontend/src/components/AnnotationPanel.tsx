@@ -10,6 +10,8 @@ import { useUIStore } from "../stores/uiStore";
 /* ── Constants ── */
 const CARD_GAP = 8;
 const EST_CARD_H = 88;
+const EST_ADD_BUTTON_H = 36;
+const EST_FORM_H = 260;
 const CURVE_INDENT = 28;
 
 /* ── Tag catalog ── */
@@ -80,6 +82,9 @@ interface LayoutGroup {
     /** Desired vertical CENTER of this card group (block midpoint) */
     targetMidY: number;
     height: number;
+    anchorOffset: number;
+    spanTopY: number;
+    spanBottomY: number;
 }
 
 /**
@@ -93,9 +98,10 @@ function resolvePositions(
     if (groups.length === 0) return new Map();
     const sorted = [...groups].sort((a, b) => a.targetMidY - b.targetMidY);
     const result = new Map<string, number>();
+    const tops = new Array<number>(sorted.length);
 
-    // Center-align: top = midY - height/2
-    const idealTop = (g: LayoutGroup) => Math.max(0, g.targetMidY - g.height / 2);
+    // Align the connector target, not the group center.
+    const idealTop = (g: LayoutGroup) => g.targetMidY - g.anchorOffset;
 
     const activeIdx =
         activeBlockId != null
@@ -104,27 +110,113 @@ function resolvePositions(
 
     const anchorIdx = activeIdx >= 0 ? activeIdx : 0;
     const anchor = sorted[anchorIdx];
-    result.set(anchor.blockId, idealTop(anchor));
+    tops[anchorIdx] = idealTop(anchor);
 
     // Pack upward from anchor
-    let ceiling = idealTop(anchor);
     for (let i = anchorIdx - 1; i >= 0; i--) {
         const g = sorted[i];
-        const y = Math.max(0, Math.min(idealTop(g), ceiling - g.height - CARD_GAP));
-        result.set(g.blockId, y);
-        ceiling = y;
+        tops[i] = Math.min(
+            idealTop(g),
+            tops[i + 1] - g.height - CARD_GAP
+        );
     }
 
     // Pack downward from anchor
-    let floor = idealTop(anchor) + anchor.height + CARD_GAP;
     for (let i = anchorIdx + 1; i < sorted.length; i++) {
         const g = sorted[i];
-        const y = Math.max(idealTop(g), floor);
-        result.set(g.blockId, y);
-        floor = y + g.height + CARD_GAP;
+        tops[i] = Math.max(
+            idealTop(g),
+            tops[i - 1] + sorted[i - 1].height + CARD_GAP
+        );
     }
 
+    const shiftDown = Math.max(0, -Math.min(...tops));
+    sorted.forEach((g, i) => {
+        result.set(g.blockId, tops[i] + shiftDown);
+    });
+
     return result;
+}
+
+interface GroupSpan {
+    topY: number;
+    bottomY: number;
+}
+
+interface GroupMetrics {
+    height: number;
+    anchorOffset: number;
+}
+
+function blockSpan(
+    blockId: string,
+    topMap: Map<string, number>,
+    bottomMap: Map<string, number>
+): GroupSpan | null {
+    const top = topMap.get(blockId);
+    const bottom = bottomMap.get(blockId);
+    if (top == null && bottom == null) return null;
+    const safeTop = top ?? Math.max(0, (bottom ?? 28) - 28);
+    const safeBottom = Math.max(bottom ?? safeTop + 28, safeTop + 28);
+    return { topY: safeTop, bottomY: safeBottom };
+}
+
+function mergeSpans(spans: GroupSpan[]): GroupSpan | null {
+    if (spans.length === 0) return null;
+    return {
+        topY: Math.min(...spans.map((span) => span.topY)),
+        bottomY: Math.max(...spans.map((span) => span.bottomY)),
+    };
+}
+
+function annotationSpan(
+    annotation: Annotation,
+    topMap: Map<string, number>,
+    bottomMap: Map<string, number>
+): GroupSpan | null {
+    const start = blockSpan(annotation.start_block, topMap, bottomMap);
+    const end = blockSpan(annotation.end_block, topMap, bottomMap);
+    if (!start && !end) return null;
+    return mergeSpans([start, end].filter((span): span is GroupSpan => span != null));
+}
+
+function fallbackGroupMetrics(
+    annotationCount: number,
+    isPrimary: boolean,
+    isAdding: boolean
+): GroupMetrics {
+    const stackHeight = annotationCount > 0 ? annotationCount * EST_CARD_H : 0;
+    const controlHeight = isAdding ? EST_FORM_H : isPrimary ? EST_ADD_BUTTON_H : 0;
+    const gap = stackHeight > 0 && controlHeight > 0 ? CARD_GAP : 0;
+    const height = Math.max(stackHeight + gap + controlHeight, EST_CARD_H);
+    const anchorOffset =
+        stackHeight > 0
+            ? stackHeight / 2
+            : isAdding
+              ? EST_FORM_H / 2
+              : EST_ADD_BUTTON_H / 2;
+    return {
+        height,
+        anchorOffset: Math.min(height, Math.max(0, anchorOffset)),
+    };
+}
+
+function sameMetricsMap(
+    a: Map<string, GroupMetrics>,
+    b: Map<string, GroupMetrics>
+): boolean {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a) {
+        const other = b.get(key);
+        if (
+            other == null ||
+            other.height !== value.height ||
+            other.anchorOffset !== value.anchorOffset
+        ) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /* ── S-curve SVG path (explicit Y endpoints) ── */
@@ -236,8 +328,12 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
     const [showInfo, setShowInfo] = useState(true);
     const [showIssue, setShowIssue] = useState(true);
     const toolbarRef = useRef<HTMLDivElement>(null);
-    const formRef = useRef<HTMLDivElement>(null);
+    const groupRefs = useRef(new Map<string, HTMLDivElement>());
+    const connectorTargetRefs = useRef(new Map<string, HTMLElement>());
     const [toolbarH, setToolbarH] = useState(0);
+    const [groupMetricsMap, setGroupMetricsMap] = useState<Map<string, GroupMetrics>>(
+        new Map()
+    );
 
     // Form state
     const [addingForBlock, setAddingForBlock] = useState<string | null>(null);
@@ -255,9 +351,10 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
         const topMap = new Map<string, number>();
         const botMap = new Map<string, number>();
         reader.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
-            const top = el.getBoundingClientRect().top - rTop;
+            const rect = el.getBoundingClientRect();
+            const top = rect.top - rTop;
             topMap.set(el.dataset.blockId!, top);
-            botMap.set(el.dataset.blockId!, top + el.offsetHeight);
+            botMap.set(el.dataset.blockId!, rect.bottom - rTop);
         });
         setBlockYMap(topMap);
         setBlockBottomMap(botMap);
@@ -340,34 +437,117 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
         return ids;
     }, [grouped, activeBlockIds]);
 
+    const slotBlockIdList = useMemo(() => Array.from(slotBlockIds), [slotBlockIds]);
+
+    const setGroupRef = useCallback(
+        (blockId: string, el: HTMLDivElement | null) => {
+            if (el) groupRefs.current.set(blockId, el);
+            else groupRefs.current.delete(blockId);
+        },
+        []
+    );
+
+    const setConnectorTargetRef = useCallback(
+        (blockId: string, el: HTMLElement | null) => {
+            if (el) connectorTargetRefs.current.set(blockId, el);
+            else connectorTargetRefs.current.delete(blockId);
+        },
+        []
+    );
+
+    const measureGroupMetrics = useCallback(() => {
+        const next = new Map<string, GroupMetrics>();
+        for (const blockId of slotBlockIdList) {
+            const groupEl = groupRefs.current.get(blockId);
+            if (!groupEl) continue;
+
+            const groupRect = groupEl.getBoundingClientRect();
+            const height = Math.max(1, Math.round(groupRect.height));
+            const targetEl = connectorTargetRefs.current.get(blockId);
+
+            let anchorOffset = Math.round(height / 2);
+            if (targetEl) {
+                const targetRect = targetEl.getBoundingClientRect();
+                anchorOffset = Math.round(
+                    targetRect.top - groupRect.top + targetRect.height / 2
+                );
+            }
+
+            next.set(blockId, {
+                height,
+                anchorOffset: Math.min(height, Math.max(0, anchorOffset)),
+            });
+        }
+
+        setGroupMetricsMap((prev) => (sameMetricsMap(prev, next) ? prev : next));
+    }, [slotBlockIdList]);
+
+    useEffect(() => {
+        measureGroupMetrics();
+
+        const ro = new ResizeObserver(() => {
+            measureGroupMetrics();
+        });
+
+        for (const blockId of slotBlockIdList) {
+            const groupEl = groupRefs.current.get(blockId);
+            const targetEl = connectorTargetRefs.current.get(blockId);
+            if (groupEl) ro.observe(groupEl);
+            if (targetEl) ro.observe(targetEl);
+        }
+
+        return () => ro.disconnect();
+    }, [slotBlockIdList, measureGroupMetrics, grouped, addingForBlock]);
+
     const layoutGroups = useMemo(
         () =>
-            Array.from(slotBlockIds).map((blockId) => {
+            slotBlockIdList.map((blockId) => {
                 const anns = grouped.get(blockId) ?? [];
-                let items = anns.length;
-                // Only add form height when the form is actually open
-                if (blockId === activeBlockId && addingForBlock === blockId) {
-                    items += 3;
-                }
-                // Compute block midpoint as target center
-                const blockTop = blockYMap.get(blockId) ?? 0;
-                const blockBot = blockBottomMap.get(blockId) ?? blockTop + 28;
-                let midY = (blockTop + blockBot) / 2;
-                // For multi-block selection, use the selection midpoint
-                if (blockId === activeBlockId && activeBlockIds.length > 1) {
-                    const firstTop = blockYMap.get(activeBlockIds[0]);
-                    const lastBot = blockBottomMap.get(activeBlockIds[activeBlockIds.length - 1]);
-                    if (firstTop != null && lastBot != null) {
-                        midY = (firstTop + lastBot) / 2;
-                    }
-                }
+                const isPrimary = blockId === activeBlockId;
+                const isAdding = addingForBlock === blockId;
+                const selectionSpan =
+                    isPrimary && activeBlockIds.length > 1
+                        ? mergeSpans(
+                              activeBlockIds
+                                  .map((id) => blockSpan(id, blockYMap, blockBottomMap))
+                                  .filter((span): span is GroupSpan => span != null)
+                          )
+                        : null;
+                const annotationSpans = anns
+                    .map((ann) => annotationSpan(ann, blockYMap, blockBottomMap))
+                    .filter((span): span is GroupSpan => span != null);
+                const span =
+                    selectionSpan ??
+                    mergeSpans(annotationSpans) ??
+                    blockSpan(blockId, blockYMap, blockBottomMap) ?? {
+                        topY: 0,
+                        bottomY: 28,
+                    };
+                const fallbackMetrics = fallbackGroupMetrics(
+                    anns.length,
+                    isPrimary,
+                    isAdding
+                );
+                const metrics = groupMetricsMap.get(blockId) ?? fallbackMetrics;
                 return {
                     blockId,
-                    targetMidY: midY,
-                    height: Math.max(items, 1) * EST_CARD_H,
+                    targetMidY: (span.topY + span.bottomY) / 2,
+                    height: metrics.height,
+                    anchorOffset: metrics.anchorOffset,
+                    spanTopY: span.topY,
+                    spanBottomY: span.bottomY,
                 };
             }),
-        [slotBlockIds, grouped, activeBlockId, activeBlockIds, addingForBlock, blockYMap, blockBottomMap]
+        [
+            slotBlockIdList,
+            grouped,
+            activeBlockId,
+            activeBlockIds,
+            addingForBlock,
+            blockYMap,
+            blockBottomMap,
+            groupMetricsMap,
+        ]
     );
 
     const positions = useMemo(
@@ -375,21 +555,22 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
         [layoutGroups, activeBlockId]
     );
 
-    // Map blockId → estimated group height (for S-curve midpoint)
-    const groupHeightMap = useMemo(() => {
-        const m = new Map<string, number>();
-        for (const g of layoutGroups) m.set(g.blockId, g.height);
+    const layoutGroupByBlock = useMemo(() => {
+        const m = new Map<string, LayoutGroup>();
+        for (const g of layoutGroups) {
+            m.set(g.blockId, g);
+        }
         return m;
     }, [layoutGroups]);
 
     const panelHeight = useMemo(() => {
         let max = contentHeight;
         for (const [blockId, y] of positions) {
-            const g = layoutGroups.find((g) => g.blockId === blockId);
+            const g = layoutGroupByBlock.get(blockId);
             if (g) max = Math.max(max, y + g.height + 200);
         }
-        return max;
-    }, [positions, layoutGroups, contentHeight]);
+        return Math.max(max, toolbarH + contentHeight);
+    }, [positions, layoutGroupByBlock, contentHeight, toolbarH]);
 
     const toggleTag = (slug: string) => {
         setFormTags((prev) =>
@@ -470,68 +651,63 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                 >
                     {/* Multi-block selection bracket (] shape) */}
                     {activeBlockIds.length > 1 && (() => {
-                        const firstTop = blockYMap.get(activeBlockIds[0]);
-                        const lastBot = blockBottomMap.get(activeBlockIds[activeBlockIds.length - 1]);
-                        if (firstTop == null || lastBot == null) return null;
-                        const midY = (firstTop + lastBot) / 2;
+                        const group = activeBlockId
+                            ? layoutGroupByBlock.get(activeBlockId)
+                            : null;
                         const cardY = positions.get(activeBlockIds[0]);
-                        const cardH = groupHeightMap.get(activeBlockIds[0]) ?? EST_CARD_H;
-                        const cardMid = cardY != null ? cardY + cardH / 2 : null;
+                        const cardMid =
+                            cardY != null && group != null
+                                ? cardY + group.anchorOffset
+                                : null;
+                        if (group == null) return null;
                         return (
                             <g>
                                 {/* ] bracket: ticks left, bar right */}
-                                <line x1={1} y1={firstTop} x2={7} y2={firstTop}
+                                <line x1={1} y1={group.spanTopY} x2={7} y2={group.spanTopY}
                                     stroke="#4a6fa5" strokeWidth={1.5} />
-                                <line x1={7} y1={firstTop} x2={7} y2={lastBot}
+                                <line x1={7} y1={group.spanTopY} x2={7} y2={group.spanBottomY}
                                     stroke="#4a6fa5" strokeWidth={1.5} />
-                                <line x1={1} y1={lastBot} x2={7} y2={lastBot}
+                                <line x1={1} y1={group.spanBottomY} x2={7} y2={group.spanBottomY}
                                     stroke="#4a6fa5" strokeWidth={1.5} />
                                 {cardMid != null && (
-                                    <path d={sCurveBracket(midY, cardMid)}
+                                    <path d={sCurveBracket(group.targetMidY, cardMid)}
                                         fill="none" stroke="#4a6fa5" strokeWidth={1.5} />
                                 )}
                             </g>
                         );
                     })()}
                     {/* Single-block and stored multi-block connectors */}
-                    {Array.from(slotBlockIds).map((blockId) => {
+                    {slotBlockIdList.map((blockId) => {
                         // Skip blocks covered by the active multi-select bracket
                         if (activeBlockIds.length > 1 && activeBlockIds.includes(blockId))
                             return null;
-                        const blockTop = blockYMap.get(blockId);
-                        const blockBot = blockBottomMap.get(blockId);
+                        const layout = layoutGroupByBlock.get(blockId);
                         const cardY = positions.get(blockId);
-                        if (blockTop == null || cardY == null) return null;
+                        if (layout == null || cardY == null) return null;
                         const anns = grouped.get(blockId) ?? [];
-                        if (anns.length === 0) return null;
-                        const cardH = groupHeightMap.get(blockId) ?? EST_CARD_H;
-                        const cardMid = cardY + cardH / 2;
-                        // Multi-block stored annotation → ] bracket
-                        const multiSpan = anns.find((a) => a.start_block !== a.end_block);
-                        if (multiSpan) {
-                            const endBot = blockBottomMap.get(multiSpan.end_block);
-                            if (endBot != null) {
-                                const midY = (blockTop + endBot) / 2;
-                                return (
-                                    <g key={blockId}>
-                                        <line x1={1} y1={blockTop} x2={7} y2={blockTop}
-                                            stroke="#ccc" strokeWidth={1} />
-                                        <line x1={7} y1={blockTop} x2={7} y2={endBot}
-                                            stroke="#ccc" strokeWidth={1} />
-                                        <line x1={1} y1={endBot} x2={7} y2={endBot}
-                                            stroke="#ccc" strokeWidth={1} />
-                                        <path d={sCurveBracket(midY, cardMid)}
-                                            fill="none" stroke="#ddd" strokeWidth={1} />
-                                    </g>
-                                );
-                            }
+                        const showConnector = anns.length > 0 || blockId === activeBlockId;
+                        if (!showConnector) return null;
+                        const cardMid = cardY + layout.anchorOffset;
+                        const hasMultiSpan = anns.some((a) => a.start_block !== a.end_block);
+                        if (hasMultiSpan) {
+                            return (
+                                <g key={blockId}>
+                                    <line x1={1} y1={layout.spanTopY} x2={7} y2={layout.spanTopY}
+                                        stroke="#ccc" strokeWidth={1} />
+                                    <line x1={7} y1={layout.spanTopY} x2={7} y2={layout.spanBottomY}
+                                        stroke="#ccc" strokeWidth={1} />
+                                    <line x1={1} y1={layout.spanBottomY} x2={7} y2={layout.spanBottomY}
+                                        stroke="#ccc" strokeWidth={1} />
+                                    <path d={sCurveBracket(layout.targetMidY, cardMid)}
+                                        fill="none" stroke="#ddd" strokeWidth={1} />
+                                </g>
+                            );
                         }
                         // Single-block → dot + S-curve
-                        const blockMid = (blockTop + (blockBot ?? blockTop + 28)) / 2;
                         return (
                             <g key={blockId}>
-                                <circle cx={4} cy={blockMid} r={3} fill="#ccc" />
-                                <path d={sCurve(blockMid, cardMid)}
+                                <circle cx={4} cy={layout.targetMidY} r={3} fill="#ccc" />
+                                <path d={sCurve(layout.targetMidY, cardMid)}
                                     fill="none" stroke="#ddd" strokeWidth={1} />
                             </g>
                         );
@@ -539,7 +715,7 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                 </svg>
 
                 {/* Positioned annotation groups */}
-                {Array.from(slotBlockIds).map((blockId) => {
+                {slotBlockIdList.map((blockId) => {
                     const y = positions.get(blockId) ?? 0;
                     const anns = grouped.get(blockId) ?? [];
                     const isPrimary = blockId === activeBlockId;
@@ -548,116 +724,129 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                         <div
                             key={blockId}
                             className="annotation-group"
+                            ref={(el) => setGroupRef(blockId, el)}
                             style={{
                                 position: "absolute",
                                 top: y,
                                 left: CURVE_INDENT + 4,
                                 right: 0,
                                 transition: "top 0.25s ease-out",
+                                zIndex: isPrimary ? 2 : 1,
                             }}
                         >
-                            {anns.map((ann) => {
-                                const colors = cardColors(ann);
-                                return (
-                                    <div
-                                        key={ann.id}
-                                        className="annotation-card"
-                                        style={{
-                                            background: colors.bg,
-                                            borderLeft: `3px solid ${colors.border}`,
-                                            opacity: ann.resolved ? 0.5 : 1,
-                                            marginBottom: CARD_GAP,
-                                            cursor: "pointer",
-                                        }}
-                                        onClick={() => {
-                                            if (ann.start_block !== ann.end_block) {
-                                                setBlockRange(ann.start_block, ann.end_block, orderedBlockIds);
-                                            } else {
-                                                setActiveBlock(ann.start_block);
-                                            }
-                                        }}
-                                    >
-                                        <div className="annotation-card-header">
-                                            <span>
-                                                <span
-                                                    style={{
-                                                        display: "inline-block",
-                                                        width: 8,
-                                                        height: 8,
-                                                        borderRadius: "50%",
-                                                        background: colors.dot,
-                                                        marginRight: 6,
-                                                    }}
-                                                />
-                                                <strong style={{ textTransform: "capitalize" }}>
-                                                    {ann.category}
-                                                </strong>
-                                                {ann.severity && (
-                                                    <span className="annotation-severity-badge" style={{ marginLeft: 6 }}>
-                                                        {ann.severity}
-                                                    </span>
-                                                )}
-                                            </span>
-                                            <span className="annotation-card-meta">
-                                                {ann.source === "agent"
-                                                    ? "AI"
-                                                    : "Human"}
-                                            </span>
-                                        </div>
-                                        {/* Tag chips */}
-                                        {ann.tags.length > 0 && (
-                                            <div className="annotation-tag-chips">
-                                                {ann.tags.map((t) => (
-                                                    <span key={t} className="annotation-tag-chip">
-                                                        {tagLabel(t)}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                        <EditableMessage
-                                            annotation={ann}
-                                            docId={docId!}
-                                        />
-                                        <div className="annotation-card-actions">
-                                            <label className="annotation-resolve">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={ann.resolved}
-                                                    onChange={() =>
-                                                        docId &&
-                                                        updateAnnotation(
-                                                            docId,
-                                                            ann.id,
-                                                            {
-                                                                resolved:
-                                                                    !ann.resolved,
-                                                            }
-                                                        )
+                            {anns.length > 0 && (
+                                <div
+                                    ref={(el) => setConnectorTargetRef(blockId, el)}
+                                    style={{ display: "flex", flexDirection: "column" }}
+                                >
+                                    {anns.map((ann, index) => {
+                                        const colors = cardColors(ann);
+                                        return (
+                                            <div
+                                                key={ann.id}
+                                                className="annotation-card"
+                                                style={{
+                                                    background: colors.bg,
+                                                    borderLeft: `3px solid ${colors.border}`,
+                                                    opacity: ann.resolved ? 0.5 : 1,
+                                                    marginBottom:
+                                                        index === anns.length - 1
+                                                            ? 0
+                                                            : CARD_GAP,
+                                                    cursor: "pointer",
+                                                }}
+                                                onClick={() => {
+                                                    if (ann.start_block !== ann.end_block) {
+                                                        setBlockRange(ann.start_block, ann.end_block, orderedBlockIds);
+                                                    } else {
+                                                        setActiveBlock(ann.start_block);
                                                     }
-                                                />
-                                                {resolveLabel(ann.category)}
-                                            </label>
-                                            <button
-                                                className="btn btn-sm btn-danger"
-                                                onClick={() =>
-                                                    docId &&
-                                                    deleteAnnotation(
-                                                        docId,
-                                                        ann.id
-                                                    )
-                                                }
+                                                }}
                                             >
-                                                Delete
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                                <div className="annotation-card-header">
+                                                    <span>
+                                                        <span
+                                                            style={{
+                                                                display: "inline-block",
+                                                                width: 8,
+                                                                height: 8,
+                                                                borderRadius: "50%",
+                                                                background: colors.dot,
+                                                                marginRight: 6,
+                                                            }}
+                                                        />
+                                                        <strong style={{ textTransform: "capitalize" }}>
+                                                            {ann.category}
+                                                        </strong>
+                                                        {ann.severity && (
+                                                            <span className="annotation-severity-badge" style={{ marginLeft: 6 }}>
+                                                                {ann.severity}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <span className="annotation-card-meta">
+                                                        {ann.source === "agent"
+                                                            ? "AI"
+                                                            : "Human"}
+                                                    </span>
+                                                </div>
+                                                {/* Tag chips */}
+                                                {ann.tags.length > 0 && (
+                                                    <div className="annotation-tag-chips">
+                                                        {ann.tags.map((t) => (
+                                                            <span key={t} className="annotation-tag-chip">
+                                                                {tagLabel(t)}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <EditableMessage
+                                                    annotation={ann}
+                                                    docId={docId!}
+                                                />
+                                                <div className="annotation-card-actions">
+                                                    <label className="annotation-resolve">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={ann.resolved}
+                                                            onChange={() =>
+                                                                docId &&
+                                                                updateAnnotation(
+                                                                    docId,
+                                                                    ann.id,
+                                                                    {
+                                                                        resolved:
+                                                                            !ann.resolved,
+                                                                    }
+                                                                )
+                                                            }
+                                                        />
+                                                        {resolveLabel(ann.category)}
+                                                    </label>
+                                                    <button
+                                                        className="btn btn-sm btn-danger"
+                                                        onClick={() =>
+                                                            docId &&
+                                                            deleteAnnotation(
+                                                                docId,
+                                                                ann.id
+                                                            )
+                                                        }
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
 
                             {/* Inline "+ Add annotation" for the active block */}
                             {isPrimary && addingForBlock !== blockId && (
                                 <button
                                     className="btn btn-sm btn-add-annotation"
+                                    ref={anns.length === 0 ? (el) => setConnectorTargetRef(blockId, el) : undefined}
                                     onClick={() => setAddingForBlock(blockId)}
                                 >
                                     + Add annotation
@@ -666,7 +855,10 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
 
                             {/* Inline creation form */}
                             {addingForBlock === blockId && (
-                                <div className="annotation-form" ref={formRef}>
+                                <div
+                                    className="annotation-form"
+                                    ref={anns.length === 0 ? (el) => setConnectorTargetRef(blockId, el) : undefined}
+                                >
                                     <label>
                                         Category
                                         <select
