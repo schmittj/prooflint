@@ -570,7 +570,7 @@ def start_servers(conda, dev_mode=False):
         signal.signal(signal.SIGHUP, shutdown)
 
     # --- wait for servers to be reachable ----------------------------------
-    if not _wait_for_port(backend_port, timeout=20):
+    if not _wait_for_port(backend_port, timeout=30):
         warn("Backend did not start in time.  Try --dev for details.")
     if not _wait_for_port(frontend_port, timeout=15):
         warn("Frontend did not start in time.  Try --dev for details.")
@@ -585,14 +585,12 @@ def start_servers(conda, dev_mode=False):
     print()
     success("ProofLint is running!")
     print()
-    info("Frontend : {}".format(url))
-    info("Backend  : http://localhost:{}".format(backend_port))
-    info("API docs : http://localhost:{}/api/v1/".format(backend_port))
+    info("Open in your browser: {}".format(url))
     print()
     if not _has_api_key():
         warn("No API key configured — open Settings in the browser to add one.")
         print()
-    info("Press Ctrl+C to stop.")
+    info("To stop ProofLint, press Ctrl+C here or close this terminal.")
     print()
 
     # --- keep-alive loop ---------------------------------------------------

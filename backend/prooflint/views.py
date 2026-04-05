@@ -1,4 +1,4 @@
-"""Settings API — read/write .env configuration from the browser.
+"""Settings & system API — read/write .env, health check, shutdown.
 
 Restricted to localhost connections only.  API keys are masked on read
 so they never travel in full over the wire (the user submits new values
@@ -6,7 +6,9 @@ but never sees old ones in plain text).
 """
 
 import json
+import os
 import re
+import signal
 from pathlib import Path
 
 from django.conf import settings
@@ -180,3 +182,41 @@ class SettingsView(APIView):
             "updated": sorted(updates.keys()),
             "notice": "Settings saved. Restart ProofLint for changes to take effect.",
         })
+
+
+class HealthView(APIView):
+    """GET /api/v1/health/ — simple liveness check."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({"status": "ok"})
+
+
+class ShutdownView(APIView):
+    """POST /api/v1/shutdown/ — gracefully stop the ProofLint server.
+
+    Only works from localhost.  Sends SIGTERM to the parent process
+    (the launcher), which then tears down both backend and frontend.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        if not _is_localhost(request):
+            return Response(
+                {"error": "Shutdown is only accessible from localhost."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Send SIGTERM to the parent (the launcher script)
+        ppid = os.getppid()
+        try:
+            os.kill(ppid, signal.SIGTERM)
+        except OSError:
+            # Fallback: terminate ourselves
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        return Response({"status": "shutting down"})
