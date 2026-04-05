@@ -61,7 +61,7 @@ export default function DocumentView() {
     const { currentDocument, blocks, loading, fetchDocument, fetchBlocks } =
         useDocumentStore();
     const { annotations, fetchAnnotations } = useAnnotationStore();
-    const { activeBlockId, sidebarCollapsed, toggleSidebar, setActiveBlock } = useUIStore();
+    const { activeBlockIds, sidebarCollapsed, toggleSidebar, setActiveBlock } = useUIStore();
 
     useEffect(() => {
         if (id) {
@@ -88,6 +88,16 @@ export default function DocumentView() {
         }
         return (parentId: string) => map.get(parentId) ?? [];
     }, [blocks]);
+
+    // Flat ordered list of all block IDs (for shift+click range selection)
+    const orderedBlockIds = useMemo(() => {
+        const ids: string[] = [];
+        for (const b of topLevelBlocks) {
+            ids.push(b.block_id);
+            for (const c of childrenOf(b.id)) ids.push(c.block_id);
+        }
+        return ids;
+    }, [topLevelBlocks, childrenOf]);
 
     // TODO: once multi-block spans exist, index each annotation under every
     // block it covers (start_block through end_block), not just start_block.
@@ -178,7 +188,7 @@ export default function DocumentView() {
                             {section.children.map((b) => (
                                 <div
                                     key={b.block_id}
-                                    className={`sidebar-item ${activeBlockId === b.block_id ? "active" : ""}`}
+                                    className={`sidebar-item ${activeBlockIds.includes(b.block_id) ? "active" : ""}`}
                                     onClick={() => scrollToBlock(b.block_id, true)}
                                 >
                                     <span className="sidebar-item-label">
@@ -257,6 +267,7 @@ export default function DocumentView() {
                                     block={block}
                                     isContainer={hasChildren}
                                     annotations={blockAnns}
+                                    orderedBlockIds={orderedBlockIds}
                                 />
                                 {children.map((child) => {
                                     const childAnns =
@@ -281,6 +292,7 @@ export default function DocumentView() {
                                             <BlockRenderer
                                                 block={child}
                                                 annotations={childAnns}
+                                                orderedBlockIds={orderedBlockIds}
                                             />
                                         </div>
                                     );
@@ -293,7 +305,7 @@ export default function DocumentView() {
 
             {/* ── Right panel: annotations ── */}
             <aside className="doc-right-panel">
-                <AnnotationPanel readerRef={readerRef} />
+                <AnnotationPanel readerRef={readerRef} orderedBlockIds={orderedBlockIds} />
             </aside>
         </div>
     );

@@ -239,15 +239,21 @@
     padding: 8px 8px 8px 32px;
     border-bottom: 1px solid #eee;
 }
-.hide-checked-toggle {
+.annotation-panel-toolbar {
+    display: flex;
+    gap: 12px;
+}
+.category-toggle {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.8rem;
+    gap: 4px;
+    font-size: 0.75rem;
     color: #666;
     cursor: pointer;
 }
-.hide-checked-toggle input { accent-color: #2e7d32; }
+.category-toggle-check input  { accent-color: #2e7d32; }
+.category-toggle-info input   { accent-color: #5b9bd5; }
+.category-toggle-issue input  { accent-color: #d4a017; }
 .annotation-card-actions {
     display: flex;
     align-items: center;

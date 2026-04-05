@@ -125,14 +125,10 @@ function resolvePositions(
     return result;
 }
 
-/* ── S-curve SVG path ── */
-function sCurve(blockY: number, cardY: number): string {
-    const x0 = 4,
-        y0 = blockY + 14;
-    const x1 = CURVE_INDENT,
-        y1 = cardY + 14;
+/* ── S-curve SVG path (explicit Y endpoints) ── */
+function sCurve(leftY: number, rightY: number): string {
     const mx = CURVE_INDENT / 2;
-    return `M ${x0},${y0} C ${mx},${y0} ${mx},${y1} ${x1},${y1}`;
+    return `M 4,${leftY} C ${mx},${leftY} ${mx},${rightY} ${CURVE_INDENT},${rightY}`;
 }
 
 /* ── Inline Markdown renderer ── */
@@ -213,19 +209,27 @@ function EditableMessage({
 /* ── Main component ── */
 interface Props {
     readerRef: React.RefObject<HTMLElement | null>;
+    orderedBlockIds: string[];
 }
 
-export default function AnnotationPanel({ readerRef }: Props) {
+export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
     const { id: docId } = useParams<{ id: string }>();
     const { annotations, createAnnotation, updateAnnotation, deleteAnnotation } =
         useAnnotationStore();
-    const { activeBlockId } = useUIStore();
+    const { activeBlockIds, setActiveBlock, setBlockRange } = useUIStore();
+    const activeBlockId = activeBlockIds[0] ?? null;
     const panelRef = useRef<HTMLDivElement>(null);
 
     const [blockYMap, setBlockYMap] = useState<Map<string, number>>(new Map());
+    const [blockBottomMap, setBlockBottomMap] = useState<Map<string, number>>(new Map());
     const [contentHeight, setContentHeight] = useState(1000);
 
-    const [hideChecked, setHideChecked] = useState(false);
+    const [showCheck, setShowCheck] = useState(true);
+    const [showInfo, setShowInfo] = useState(true);
+    const [showIssue, setShowIssue] = useState(true);
+    const toolbarRef = useRef<HTMLDivElement>(null);
+    const formRef = useRef<HTMLDivElement>(null);
+    const [toolbarH, setToolbarH] = useState(0);
 
     // Form state
     const [addingForBlock, setAddingForBlock] = useState<string | null>(null);
@@ -240,11 +244,15 @@ export default function AnnotationPanel({ readerRef }: Props) {
         if (!reader) return;
         setContentHeight(reader.scrollHeight);
         const rTop = reader.getBoundingClientRect().top - reader.scrollTop;
-        const map = new Map<string, number>();
+        const topMap = new Map<string, number>();
+        const botMap = new Map<string, number>();
         reader.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
-            map.set(el.dataset.blockId!, el.getBoundingClientRect().top - rTop);
+            const top = el.getBoundingClientRect().top - rTop;
+            topMap.set(el.dataset.blockId!, top);
+            botMap.set(el.dataset.blockId!, top + el.offsetHeight);
         });
-        setBlockYMap(map);
+        setBlockYMap(topMap);
+        setBlockBottomMap(botMap);
     }, [readerRef]);
 
     useEffect(() => {
@@ -277,6 +285,16 @@ export default function AnnotationPanel({ readerRef }: Props) {
         };
     }, [readerRef, measureBlocks]);
 
+    // Measure toolbar height for Y offset correction
+    useEffect(() => {
+        const el = toolbarRef.current;
+        if (!el) return;
+        const ro = new ResizeObserver(() => setToolbarH(el.offsetHeight));
+        ro.observe(el);
+        setToolbarH(el.offsetHeight);
+        return () => ro.disconnect();
+    }, []);
+
     useEffect(() => {
         setAddingForBlock(null);
     }, [activeBlockId]);
@@ -286,29 +304,32 @@ export default function AnnotationPanel({ readerRef }: Props) {
         setFormTags([]);
     }, [formCategory]);
 
-    // Group annotations by start_block, applying hideChecked filter
+    // Scroll form into view when it opens
+    useEffect(() => {
+        if (addingForBlock && formRef.current) {
+            formRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+    }, [addingForBlock]);
+
+    // Group annotations by start_block, applying category visibility filters
     const grouped = useMemo(() => {
+        const visible = { check: showCheck, info: showInfo, issue: showIssue };
         const map = new Map<string, Annotation[]>();
         for (const a of annotations) {
-            if (
-                hideChecked &&
-                a.category === "check" &&
-                a.start_block !== activeBlockId
-            ) {
-                continue;
-            }
+            if (!visible[a.category] && !activeBlockIds.includes(a.start_block)) continue;
             const arr = map.get(a.start_block) ?? [];
             arr.push(a);
             map.set(a.start_block, arr);
         }
         return map;
-    }, [annotations, hideChecked, activeBlockId]);
+    }, [annotations, showCheck, showInfo, showIssue, activeBlockIds]);
 
     const slotBlockIds = useMemo(() => {
         const ids = new Set(grouped.keys());
-        if (activeBlockId) ids.add(activeBlockId);
+        // Only add the primary selected block as a card slot (not all selected)
+        if (activeBlockIds.length > 0) ids.add(activeBlockIds[0]);
         return ids;
-    }, [grouped, activeBlockId]);
+    }, [grouped, activeBlockIds]);
 
     const layoutGroups = useMemo(
         () =>
@@ -332,11 +353,18 @@ export default function AnnotationPanel({ readerRef }: Props) {
         [layoutGroups, activeBlockId]
     );
 
+    // Map blockId → estimated group height (for S-curve midpoint)
+    const groupHeightMap = useMemo(() => {
+        const m = new Map<string, number>();
+        for (const g of layoutGroups) m.set(g.blockId, g.height);
+        return m;
+    }, [layoutGroups]);
+
     const panelHeight = useMemo(() => {
         let max = contentHeight;
         for (const [blockId, y] of positions) {
             const g = layoutGroups.find((g) => g.blockId === blockId);
-            if (g) max = Math.max(max, y + g.height + 40);
+            if (g) max = Math.max(max, y + g.height + 200);
         }
         return max;
     }, [positions, layoutGroups, contentHeight]);
@@ -351,8 +379,13 @@ export default function AnnotationPanel({ readerRef }: Props) {
         if (!docId || !addingForBlock) return;
         setSaving(true);
         try {
+            const startBlock = activeBlockIds[0] ?? addingForBlock;
+            const endBlock = activeBlockIds.length > 1
+                ? activeBlockIds[activeBlockIds.length - 1]
+                : startBlock;
             await createAnnotation(docId, {
-                start_block: addingForBlock,
+                start_block: startBlock,
+                end_block: endBlock,
                 category: formCategory,
                 tags: formTags,
                 ...(formCategory === "issue" ? { severity: formSev } : {}),
@@ -377,15 +410,19 @@ export default function AnnotationPanel({ readerRef }: Props) {
             ref={panelRef}
             className="annotation-panel-scroll"
         >
-            {/* Hide Checked toggle */}
-            <div className="annotation-panel-toolbar">
-                <label className="hide-checked-toggle">
-                    <input
-                        type="checkbox"
-                        checked={hideChecked}
-                        onChange={() => setHideChecked(!hideChecked)}
-                    />
-                    Hide checks
+            {/* Category visibility toggles */}
+            <div className="annotation-panel-toolbar" ref={toolbarRef}>
+                <label className="category-toggle category-toggle-check">
+                    <input type="checkbox" checked={showCheck} onChange={() => setShowCheck(!showCheck)} />
+                    Checks
+                </label>
+                <label className="category-toggle category-toggle-info">
+                    <input type="checkbox" checked={showInfo} onChange={() => setShowInfo(!showInfo)} />
+                    Info
+                </label>
+                <label className="category-toggle category-toggle-issue">
+                    <input type="checkbox" checked={showIssue} onChange={() => setShowIssue(!showIssue)} />
+                    Issues
                 </label>
             </div>
 
@@ -394,6 +431,8 @@ export default function AnnotationPanel({ readerRef }: Props) {
                     position: "relative",
                     minHeight: panelHeight,
                     paddingLeft: CURVE_INDENT + 4,
+                    top: -toolbarH,
+                    marginBottom: -toolbarH,
                 }}
             >
                 {/* SVG connector lines */}
@@ -407,28 +446,71 @@ export default function AnnotationPanel({ readerRef }: Props) {
                         pointerEvents: "none",
                     }}
                 >
+                    {/* Multi-block selection bracket (] shape) */}
+                    {activeBlockIds.length > 1 && (() => {
+                        const firstTop = blockYMap.get(activeBlockIds[0]);
+                        const lastBot = blockBottomMap.get(activeBlockIds[activeBlockIds.length - 1]);
+                        if (firstTop == null || lastBot == null) return null;
+                        const midY = (firstTop + lastBot) / 2;
+                        const cardY = positions.get(activeBlockIds[0]);
+                        const cardH = groupHeightMap.get(activeBlockIds[0]) ?? EST_CARD_H;
+                        const cardMid = cardY != null ? cardY + cardH / 2 : null;
+                        return (
+                            <g>
+                                {/* ] bracket: ticks left, bar right */}
+                                <line x1={1} y1={firstTop} x2={7} y2={firstTop}
+                                    stroke="#4a6fa5" strokeWidth={1.5} />
+                                <line x1={7} y1={firstTop} x2={7} y2={lastBot}
+                                    stroke="#4a6fa5" strokeWidth={1.5} />
+                                <line x1={1} y1={lastBot} x2={7} y2={lastBot}
+                                    stroke="#4a6fa5" strokeWidth={1.5} />
+                                {cardMid != null && (
+                                    <path d={sCurve(midY, cardMid)}
+                                        fill="none" stroke="#4a6fa5" strokeWidth={1.5} />
+                                )}
+                            </g>
+                        );
+                    })()}
+                    {/* Single-block and stored multi-block connectors */}
                     {Array.from(slotBlockIds).map((blockId) => {
-                        const blockY = blockYMap.get(blockId);
-                        const cardY = positions.get(blockId);
-                        if (blockY == null || cardY == null) return null;
-                        const anns = grouped.get(blockId) ?? [];
-                        if (anns.length === 0 && blockId !== activeBlockId)
+                        // Skip blocks covered by the active multi-select bracket
+                        if (activeBlockIds.length > 1 && activeBlockIds.includes(blockId))
                             return null;
-                        const isActive = blockId === activeBlockId;
+                        const blockTop = blockYMap.get(blockId);
+                        const blockBot = blockBottomMap.get(blockId);
+                        const cardY = positions.get(blockId);
+                        if (blockTop == null || cardY == null) return null;
+                        const anns = grouped.get(blockId) ?? [];
+                        if (anns.length === 0) return null;
+                        const cardH = groupHeightMap.get(blockId) ?? EST_CARD_H;
+                        const cardMid = cardY + cardH / 2;
+                        // Multi-block stored annotation → ] bracket
+                        const multiSpan = anns.find((a) => a.start_block !== a.end_block);
+                        if (multiSpan) {
+                            const endBot = blockBottomMap.get(multiSpan.end_block);
+                            if (endBot != null) {
+                                const midY = (blockTop + endBot) / 2;
+                                return (
+                                    <g key={blockId}>
+                                        <line x1={1} y1={blockTop} x2={7} y2={blockTop}
+                                            stroke="#ccc" strokeWidth={1} />
+                                        <line x1={7} y1={blockTop} x2={7} y2={endBot}
+                                            stroke="#ccc" strokeWidth={1} />
+                                        <line x1={1} y1={endBot} x2={7} y2={endBot}
+                                            stroke="#ccc" strokeWidth={1} />
+                                        <path d={sCurve(midY, cardMid)}
+                                            fill="none" stroke="#ddd" strokeWidth={1} />
+                                    </g>
+                                );
+                            }
+                        }
+                        // Single-block → dot + S-curve
+                        const blockMid = (blockTop + (blockBot ?? blockTop + 28)) / 2;
                         return (
                             <g key={blockId}>
-                                <circle
-                                    cx={4}
-                                    cy={blockY + 14}
-                                    r={3}
-                                    fill={isActive ? "#4a6fa5" : "#ccc"}
-                                />
-                                <path
-                                    d={sCurve(blockY, cardY)}
-                                    fill="none"
-                                    stroke={isActive ? "#4a6fa5" : "#ddd"}
-                                    strokeWidth={isActive ? 1.5 : 1}
-                                />
+                                <circle cx={4} cy={blockMid} r={3} fill="#ccc" />
+                                <path d={sCurve(blockMid, cardMid)}
+                                    fill="none" stroke="#ddd" strokeWidth={1} />
                             </g>
                         );
                     })}
@@ -438,7 +520,7 @@ export default function AnnotationPanel({ readerRef }: Props) {
                 {Array.from(slotBlockIds).map((blockId) => {
                     const y = positions.get(blockId) ?? 0;
                     const anns = grouped.get(blockId) ?? [];
-                    const isActive = blockId === activeBlockId;
+                    const isPrimary = blockId === activeBlockId;
 
                     return (
                         <div
@@ -463,6 +545,14 @@ export default function AnnotationPanel({ readerRef }: Props) {
                                             borderLeft: `3px solid ${colors.border}`,
                                             opacity: ann.resolved ? 0.5 : 1,
                                             marginBottom: CARD_GAP,
+                                            cursor: "pointer",
+                                        }}
+                                        onClick={() => {
+                                            if (ann.start_block !== ann.end_block) {
+                                                setBlockRange(ann.start_block, ann.end_block, orderedBlockIds);
+                                            } else {
+                                                setActiveBlock(ann.start_block);
+                                            }
                                         }}
                                     >
                                         <div className="annotation-card-header">
@@ -543,7 +633,7 @@ export default function AnnotationPanel({ readerRef }: Props) {
                             })}
 
                             {/* Inline "+ Add annotation" for the active block */}
-                            {isActive && addingForBlock !== blockId && (
+                            {isPrimary && addingForBlock !== blockId && (
                                 <button
                                     className="btn btn-sm btn-add-annotation"
                                     onClick={() => setAddingForBlock(blockId)}
@@ -554,7 +644,7 @@ export default function AnnotationPanel({ readerRef }: Props) {
 
                             {/* Inline creation form */}
                             {addingForBlock === blockId && (
-                                <div className="annotation-form">
+                                <div className="annotation-form" ref={formRef}>
                                     <label>
                                         Category
                                         <select

@@ -8,6 +8,7 @@ interface BlockRendererProps {
     block: Block;
     isContainer?: boolean;
     annotations?: Annotation[];
+    orderedBlockIds?: string[];
 }
 
 const TYPE_STYLES: Record<string, React.CSSProperties> = {
@@ -141,9 +142,10 @@ export default function BlockRenderer({
     block,
     isContainer,
     annotations = [],
+    orderedBlockIds = [],
 }: BlockRendererProps) {
-    const { activeBlockId, setActiveBlock } = useUIStore();
-    const isActive = activeBlockId === block.block_id;
+    const { activeBlockIds, setActiveBlock, setBlockRange } = useUIStore();
+    const isActive = activeBlockIds.includes(block.block_id);
 
     const overlayStyle = computeBlockOverlay(annotations);
 
@@ -171,7 +173,13 @@ export default function BlockRenderer({
             style={style}
             onClick={(e) => {
                 e.stopPropagation();
-                setActiveBlock(isActive ? null : block.block_id);
+                if (e.shiftKey && activeBlockIds.length > 0) {
+                    // Prevent browser text selection on shift+click
+                    window.getSelection()?.removeAllRanges();
+                    setBlockRange(activeBlockIds[0], block.block_id, orderedBlockIds);
+                } else {
+                    setActiveBlock(isActive ? null : block.block_id);
+                }
             }}
         >
             {label && (
