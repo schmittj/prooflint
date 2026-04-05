@@ -1,8 +1,12 @@
 import logging
 
+from django.conf import settings
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+from agents.models import AgentRun
+from agents.runner import launch_bot_run
 
 from .ingestion import ingest_document
 from .models import Block, Document
@@ -46,7 +50,26 @@ class DocumentViewSet(viewsets.ModelViewSet):
             logger.exception("Ingestion failed for document %s", doc.id)
             # Document is still created, just without blocks
 
-        # TODO: Phase 4 — if preset == "triage", kick off GlobalAnnotator
+        # Auto-trigger GlobalAnnotatorBot for triage preset
+        if doc.preset == "triage" and settings.OPENAI_API_KEY:
+            try:
+                # Use DEFAULT_MODEL only if it's an OpenAI model; the bot
+                # runner calls the OpenAI Responses API so Claude/Gemini
+                # model names would be rejected.
+                model = settings.DEFAULT_MODEL
+                if not model.startswith("gpt-"):
+                    model = "gpt-5.4-mini"
+                run = AgentRun.objects.create(
+                    document=doc,
+                    agent_type="global_annotator",
+                    model=model,
+                    preset="triage",
+                    config={"reasoning_effort": settings.DEFAULT_REASONING_EFFORT},
+                )
+                launch_bot_run(run)
+                logger.info("Auto-triggered GlobalAnnotatorBot for triage document %s", doc.id)
+            except Exception:
+                logger.exception("Failed to auto-trigger bot for document %s", doc.id)
 
         out = DocumentDetailSerializer(doc)
         return Response(out.data, status=status.HTTP_201_CREATED)

@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import Markdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeMathjax from "rehype-mathjax";
 import { useDocumentStore } from "../stores/documentStore";
 
 export default function DocumentList() {
-    const { documents, loading, fetchDocuments, createDocument } =
+    const { documents, loading, fetchDocuments, createDocument, deleteDocument } =
         useDocumentStore();
     const navigate = useNavigate();
 
@@ -14,6 +17,7 @@ export default function DocumentList() {
         "markdown"
     );
     const [preset, setPreset] = useState<"manual" | "triage">("manual");
+    const [showPreview, setShowPreview] = useState(false);
 
     useEffect(() => {
         fetchDocuments();
@@ -116,9 +120,38 @@ export default function DocumentList() {
                             />
                         </label>
                     </div>
-                    <button type="submit" disabled={loading}>
-                        {loading ? "Uploading..." : "Upload"}
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                        <button type="submit" disabled={loading}>
+                            {loading ? "Uploading..." : "Upload"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setShowPreview(!showPreview)}
+                            disabled={!source}
+                        >
+                            {showPreview ? "Hide Preview" : "Preview"}
+                        </button>
+                    </div>
+                    {showPreview && source && (
+                        <div
+                            style={{
+                                marginTop: 12,
+                                padding: 16,
+                                border: "1px solid #d0d0d0",
+                                borderRadius: 6,
+                                background: "#fafafa",
+                                maxHeight: 400,
+                                overflowY: "auto",
+                            }}
+                        >
+                            <p style={{ fontSize: "0.8rem", color: "#888", margin: "0 0 8px" }}>
+                                Rendered preview — check that math and formatting look correct:
+                            </p>
+                            <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeMathjax]}>
+                                {source}
+                            </Markdown>
+                        </div>
+                    )}
                 </form>
             )}
 
@@ -156,6 +189,26 @@ export default function DocumentList() {
                                 {doc.source_format} &middot; {doc.preset} &middot;{" "}
                                 {new Date(doc.created_at).toLocaleDateString()}
                             </span>
+                            <button
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    if (window.confirm(`Delete "${doc.title || "Untitled"}"?`)) {
+                                        deleteDocument(doc.id);
+                                    }
+                                }}
+                                style={{
+                                    marginLeft: 12,
+                                    padding: "2px 8px",
+                                    fontSize: "0.8em",
+                                    border: "1px solid #e8a0a0",
+                                    borderRadius: 4,
+                                    background: "white",
+                                    color: "#c53030",
+                                    cursor: "pointer",
+                                }}
+                            >
+                                Delete
+                            </button>
                         </li>
                     ))}
                 </ul>

@@ -18,6 +18,9 @@ class ChunkSerializer(serializers.ModelSerializer):
 
 class AgentRunSerializer(serializers.ModelSerializer):
     chunks = ChunkSerializer(many=True, read_only=True)
+    summary = serializers.SerializerMethodField()
+    overall_confidence = serializers.SerializerMethodField()
+    elapsed_seconds = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentRun
@@ -27,8 +30,11 @@ class AgentRunSerializer(serializers.ModelSerializer):
             "status",
             "model",
             "preset",
+            "config",
             "chunks",
-            "raw_output",
+            "summary",
+            "overall_confidence",
+            "elapsed_seconds",
             "error_message",
             "input_tokens",
             "output_tokens",
@@ -36,6 +42,21 @@ class AgentRunSerializer(serializers.ModelSerializer):
             "completed_at",
             "created_at",
         ]
+
+    def get_summary(self, obj):
+        if obj.raw_output and isinstance(obj.raw_output, dict):
+            return obj.raw_output.get("summary", "")
+        return ""
+
+    def get_overall_confidence(self, obj):
+        if obj.raw_output and isinstance(obj.raw_output, dict):
+            return obj.raw_output.get("overall_confidence")
+        return None
+
+    def get_elapsed_seconds(self, obj):
+        if obj.raw_output and isinstance(obj.raw_output, dict):
+            return obj.raw_output.get("elapsed_seconds")
+        return None
 
 
 class AgentRunCreateSerializer(serializers.Serializer):

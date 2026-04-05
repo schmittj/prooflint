@@ -1,12 +1,13 @@
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 
 from documents.models import Document
 
 from .models import AgentRun, ChatMessage
+from .runner import cancel_bot_run, launch_bot_run
 from .serializers import (
     AgentRunCreateSerializer,
     AgentRunSerializer,
@@ -35,7 +36,7 @@ class AgentRunViewSet(viewsets.GenericViewSet):
         return Response(serializer.data)
 
     def create(self, request, document_pk=None):
-        get_object_or_404(Document, pk=document_pk)
+        doc = get_object_or_404(Document, pk=document_pk)
         serializer = AgentRunCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -44,14 +45,28 @@ class AgentRunViewSet(viewsets.GenericViewSet):
             document_id=document_pk,
             agent_type=data["agent_type"],
             model=data["config"].get("model", settings.DEFAULT_MODEL),
-            preset="triage",
+            preset=doc.preset,
             config=data["config"],
         )
 
-        # TODO: Phase 4 — launch agent in background thread
+        # Launch the bot in a background thread
+        launch_bot_run(run)
 
         out = AgentRunSerializer(run)
         return Response(out.data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, document_pk=None, pk=None):
+        qs = self.get_queryset()
+        run = get_object_or_404(qs, pk=pk)
+        if run.status not in ("pending", "running"):
+            return Response(
+                {"detail": f"Cannot cancel run with status '{run.status}'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        cancel_bot_run(run)
+        out = AgentRunSerializer(run)
+        return Response(out.data)
 
 
 @api_view(["GET", "POST"])

@@ -175,10 +175,16 @@ class SettingsView(APIView):
 
         _write_env(new_parsed)
 
+        # Hot-reload: push updated values into os.environ and django.conf.settings
+        # so the running process picks them up without a restart.
+        for key, value in updates.items():
+            os.environ[key] = value
+            if hasattr(settings, key):
+                setattr(settings, key, value)
+
         return Response({
             "status": "ok",
             "updated": sorted(updates.keys()),
-            "notice": "Settings saved. Restart ProofLint for changes to take effect.",
         })
 
 

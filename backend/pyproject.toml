@@ -12,6 +12,7 @@ dependencies = [
     "panflute>=2.3",
     "httpx>=0.27",
     "anthropic>=0.40",
+    "openai>=2.0",
     "python-dotenv>=1.0",
 ]
 

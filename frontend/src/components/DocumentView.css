@@ -395,6 +395,33 @@
     accent-color: #4a6fa5;
 }
 
+/* ── Bot wizard overlay ── */
+.bot-wizard-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.bot-wizard {
+    background: white;
+    border-radius: 8px;
+    padding: 24px;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+/* ── Bot status bar pulse ── */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
 /* ── Mobile: stack vertically ── */
 @media (max-width: 900px) {
     .doc-layout {

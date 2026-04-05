@@ -77,7 +77,12 @@ export interface AgentRun {
     status: "pending" | "running" | "completed" | "failed";
     model: string;
     preset: string;
+    config: Record<string, unknown>;
     chunks?: Chunk[];
+    summary: string;
+    overall_confidence: number | null;
+    elapsed_seconds: number | null;
+    error_message: string;
     input_tokens: number | null;
     output_tokens: number | null;
     started_at: string | null;

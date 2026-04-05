@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useDocumentStore } from "../stores/documentStore";
 import { useAnnotationStore } from "../stores/annotationStore";
+import { useAgentStore } from "../stores/agentStore";
 import { useUIStore } from "../stores/uiStore";
 import BlockRenderer from "./BlockRenderer";
 import CheckToggle from "./CheckToggle";
 import VerificationProgress from "./VerificationProgress";
 import AnnotationPanel from "./AnnotationPanel";
+import BotWizard from "./BotWizard";
+import BotStatusBar from "./BotStatusBar";
 import type { Annotation, Block } from "../types/models";
 import "./DocumentView.css";
 
@@ -62,14 +65,17 @@ export default function DocumentView() {
         useDocumentStore();
     const { annotations, fetchAnnotations } = useAnnotationStore();
     const { activeBlockIds, sidebarCollapsed, toggleSidebar, setActiveBlock } = useUIStore();
+    const { fetchRuns, activeRun } = useAgentStore();
+    const [showWizard, setShowWizard] = useState(false);
 
     useEffect(() => {
         if (id) {
             fetchDocument(id);
             fetchBlocks(id);
             fetchAnnotations(id);
+            fetchRuns(id);
         }
-    }, [id, fetchDocument, fetchBlocks, fetchAnnotations]);
+    }, [id, fetchDocument, fetchBlocks, fetchAnnotations, fetchRuns]);
 
     // Derived data
     const topLevelBlocks = useMemo(
@@ -230,12 +236,27 @@ export default function DocumentView() {
                 <h2 style={{ marginTop: 0 }}>
                     {currentDocument.title || "Untitled document"}
                 </h2>
-                <p style={{ color: "#888", fontSize: "0.9em", marginBottom: "8px" }}>
-                    {currentDocument.source_format} &middot;{" "}
-                    {currentDocument.preset} &middot; {blocks.length} blocks
-                    {annotations.filter((a) => !a.resolved && a.category === "issue").length > 0 &&
-                        ` \u00b7 ${annotations.filter((a) => !a.resolved && a.category === "issue").length} open flags`}
-                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "8px" }}>
+                    <p style={{ color: "#888", fontSize: "0.9em", margin: 0 }}>
+                        {currentDocument.source_format} &middot;{" "}
+                        {currentDocument.preset} &middot; {blocks.length} blocks
+                        {annotations.filter((a) => !a.resolved && a.category === "issue").length > 0 &&
+                            ` \u00b7 ${annotations.filter((a) => !a.resolved && a.category === "issue").length} open flags`}
+                    </p>
+                    <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setShowWizard(true)}
+                        disabled={activeRun?.status === "running" || activeRun?.status === "pending"}
+                    >
+                        Run Bot
+                    </button>
+                </div>
+
+                <BotStatusBar docId={id!} />
+
+                {showWizard && (
+                    <BotWizard docId={id!} onClose={() => setShowWizard(false)} />
+                )}
 
                 <VerificationProgress
                     blocks={blocks}

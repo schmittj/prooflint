@@ -28,6 +28,7 @@ const TAG_CATALOG: Record<string, { slug: string; label: string }[]> = {
         { slug: "summary", label: "Summary" },
         { slug: "reference", label: "Reference" },
         { slug: "remark", label: "Remark" },
+        { slug: "expanded_argument", label: "Expanded Argument" },
     ],
     issue: [
         { slug: "typo", label: "Typo" },
@@ -334,6 +335,17 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
     const [groupMetricsMap, setGroupMetricsMap] = useState<Map<string, GroupMetrics>>(
         new Map()
     );
+
+    // Expanded arguments: track which are open
+    const [expandedArgs, setExpandedArgs] = useState<Set<string>>(new Set());
+    const toggleExpanded = (annId: string) => {
+        setExpandedArgs((prev) => {
+            const next = new Set(prev);
+            if (next.has(annId)) next.delete(annId);
+            else next.add(annId);
+            return next;
+        });
+    };
 
     // Form state
     const [addingForBlock, setAddingForBlock] = useState<string | null>(null);
@@ -800,10 +812,41 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                                                         ))}
                                                     </div>
                                                 )}
-                                                <EditableMessage
-                                                    annotation={ann}
-                                                    docId={docId!}
-                                                />
+                                                {ann.tags.includes("expanded_argument") ? (
+                                                    <div>
+                                                        <div
+                                                            style={{
+                                                                cursor: "pointer",
+                                                                fontSize: "0.8rem",
+                                                                color: "#5b9bd5",
+                                                                padding: "2px 0",
+                                                                userSelect: "none",
+                                                            }}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleExpanded(ann.id);
+                                                            }}
+                                                        >
+                                                            {expandedArgs.has(ann.id)
+                                                                ? "\u25BC"
+                                                                : "\u25B6"}{" "}
+                                                            {expandedArgs.has(ann.id)
+                                                                ? "Hide expanded argument"
+                                                                : "Show expanded argument"}
+                                                        </div>
+                                                        {expandedArgs.has(ann.id) && (
+                                                            <EditableMessage
+                                                                annotation={ann}
+                                                                docId={docId!}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <EditableMessage
+                                                        annotation={ann}
+                                                        docId={docId!}
+                                                    />
+                                                )}
                                                 <div className="annotation-card-actions">
                                                     <label className="annotation-resolve">
                                                         <input
