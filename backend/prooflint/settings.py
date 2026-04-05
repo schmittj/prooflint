@@ -107,5 +107,5 @@ REST_FRAMEWORK = {
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
-DEFAULT_TEMPERATURE = float(os.environ.get("DEFAULT_TEMPERATURE", "0.2"))
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.4")
+DEFAULT_REASONING_EFFORT = os.environ.get("DEFAULT_REASONING_EFFORT", "xhigh")
