@@ -9,20 +9,20 @@ class Annotation(models.Model):
         "documents.Document", related_name="annotations", on_delete=models.CASCADE
     )
 
-    # Anchoring — multi-level precision
-    block_id = models.CharField(max_length=50)
-    sentence_id = models.CharField(max_length=50, blank=True)
-
-    # Character-range anchoring (for precise human selections)
-    anchor_offset_start = models.PositiveIntegerField(null=True, blank=True)
-    anchor_offset_end = models.PositiveIntegerField(null=True, blank=True)
+    # ── Anchor ──
+    # String block IDs (not FKs) to survive re-ingestion which recreates Block rows.
+    start_block = models.CharField(max_length=50)
+    end_block = models.CharField(max_length=50)
+    start_offset = models.PositiveIntegerField(default=0)
+    end_offset = models.PositiveIntegerField(default=0)
     anchor_quote = models.TextField(blank=True)
 
-    # Source
+    # ── Provenance ──
     source = models.CharField(
         max_length=20,
         choices=[("human", "Human"), ("agent", "AI Agent")],
     )
+    author = models.CharField(max_length=200, blank=True)
     agent_run = models.ForeignKey(
         "agents.AgentRun",
         null=True,
@@ -37,41 +37,44 @@ class Annotation(models.Model):
         related_name="annotations",
         on_delete=models.SET_NULL,
     )
-
-    # Content
-    ANNOTATION_TYPE_CHOICES = [
-        # AI flag types
-        ("gap", "Logical Gap"),
-        ("error", "Potential Error"),
-        ("handwave", "Handwaving"),
-        ("unclear", "Unclear"),
-        ("assumption", "Unverified Assumption"),
-        ("info", "Informational Note"),
-        # Human flag types
-        ("comment", "Comment"),
-        ("checked", "Checked / Verified"),
-        ("needs_review", "Needs Review"),
-        ("logic_mistake", "Logic Mistake"),
-    ]
-    annotation_type = models.CharField(max_length=30, choices=ANNOTATION_TYPE_CHOICES)
-    severity = models.CharField(
-        max_length=20,
-        choices=[("info", "Info"), ("warning", "Warning"), ("error", "Error")],
-        default="info",
-    )
-    message = models.TextField()
-
-    # AI metadata
     confidence = models.FloatField(null=True, blank=True)
 
-    # Human metadata
+    # ── Content ──
+    CATEGORY_CHOICES = [
+        ("check", "Check"),
+        ("info", "Info"),
+        ("issue", "Issue"),
+    ]
+    category = models.CharField(max_length=10, choices=CATEGORY_CHOICES)
+    tags = models.JSONField(default=list, blank=True)
+
+    SEVERITY_CHOICES = [
+        ("question", "Question"),
+        ("warning", "Warning"),
+        ("error", "Error"),
+    ]
+    severity = models.CharField(
+        max_length=20,
+        choices=SEVERITY_CHOICES,
+        blank=True,
+    )
+    body = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    # ── Lifecycle ──
     resolved = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.CharField(max_length=200, blank=True)
+
+    # ── Links ──
+    related_annotations = models.ManyToManyField("self", blank=True, symmetrical=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["block_id", "created_at"]
+        ordering = ["start_block", "created_at"]
 
     def __str__(self):
-        return f"{self.annotation_type} on {self.block_id}"
+        tags_str = ",".join(self.tags) if self.tags else "no-tags"
+        return f"{self.category}:{tags_str} on {self.start_block}"

@@ -9,7 +9,6 @@ export default function VerificationProgress({
     blocks,
     annotationsByBlock,
 }: Props) {
-    // Only count content blocks (not section headings)
     const countable = blocks.filter((b) => b.block_type !== "section_heading");
     const total = countable.length;
     if (total === 0) return null;
@@ -20,11 +19,11 @@ export default function VerificationProgress({
     for (const b of countable) {
         const anns = annotationsByBlock.get(b.block_id) ?? [];
         const hasCheck = anns.some(
-            (a) => a.annotation_type === "checked" && !a.resolved
+            (a) => a.category === "check" && !a.resolved
         );
         const hasIssue = anns.some(
             (a) =>
-                a.annotation_type !== "checked" &&
+                a.category === "issue" &&
                 !a.resolved &&
                 (a.severity === "warning" || a.severity === "error")
         );

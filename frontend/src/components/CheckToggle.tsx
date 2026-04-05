@@ -19,13 +19,13 @@ export default function CheckToggle({
     const [busy, setBusy] = useState(false);
 
     const checkAnnotation = annotations.find(
-        (a) => a.annotation_type === "checked" && !a.resolved
+        (a) => a.category === "check" && !a.resolved
     );
     const isChecked = !!checkAnnotation;
 
     const toggle = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        setActiveBlock(blockId); // select the block
+        setActiveBlock(blockId);
         if (busy) return;
         setBusy(true);
         try {
@@ -33,10 +33,10 @@ export default function CheckToggle({
                 await deleteAnnotation(docId, checkAnnotation!.id);
             } else {
                 await createAnnotation(docId, {
-                    block_id: blockId,
-                    annotation_type: "checked",
-                    severity: "info",
-                    message: "Checked",
+                    start_block: blockId,
+                    category: "check",
+                    tags: ["manual_review"],
+                    body: "Checked",
                 });
             }
         } finally {

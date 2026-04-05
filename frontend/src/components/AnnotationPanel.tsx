@@ -12,37 +12,73 @@ const CARD_GAP = 8;
 const EST_CARD_H = 88;
 const CURVE_INDENT = 28;
 
-const SEV = {
-    info: { bg: "#eef4ff", border: "#b0c9f0", dot: "#5b9bd5" },
-    warning: { bg: "#fff8e6", border: "#e6c84a", dot: "#d4a017" },
-    error: { bg: "#fff0f0", border: "#e68a8a", dot: "#d44" },
-} as const;
+/* ── Tag catalog ── */
+const TAG_CATALOG: Record<string, { slug: string; label: string }[]> = {
+    check: [
+        { slug: "manual_review", label: "Manual Review" },
+        { slug: "experiment", label: "Experiment" },
+        { slug: "example_check", label: "Example" },
+        { slug: "formalization", label: "Formalization" },
+        { slug: "agent_review", label: "Agent Review" },
+        { slug: "cross_reference", label: "Cross-reference" },
+    ],
+    info: [
+        { slug: "summary", label: "Summary" },
+        { slug: "reference", label: "Reference" },
+        { slug: "remark", label: "Remark" },
+    ],
+    issue: [
+        { slug: "typo", label: "Typo" },
+        { slug: "assumption_mismatch", label: "Assumption Mismatch" },
+        { slug: "incomplete_argument", label: "Incomplete Argument" },
+        { slug: "gap", label: "Gap" },
+        { slug: "handwaving", label: "Handwaving" },
+        { slug: "notation_conflict", label: "Notation Conflict" },
+        { slug: "calculation_error", label: "Calculation Error" },
+        { slug: "false_citation", label: "False Citation" },
+    ],
+};
 
-const CHECKED_CARD = { bg: "#e6f4ea", border: "#6abf69", dot: "#2e7d32" };
-
-function cardColors(ann: { annotation_type: string; severity: string }) {
-    if (ann.annotation_type === "checked") return CHECKED_CARD;
-    return SEV[ann.severity as keyof typeof SEV] ?? SEV.info;
+/* ── Display helpers ── */
+const TAG_LABELS: Record<string, string> = {};
+for (const tags of Object.values(TAG_CATALOG)) {
+    for (const t of tags) TAG_LABELS[t.slug] = t.label;
 }
 
-const ANN_TYPES = [
-    { value: "gap", label: "Logical gap" },
-    { value: "error", label: "Potential error" },
-    { value: "handwave", label: "Handwaving" },
-    { value: "unclear", label: "Unclear" },
-    { value: "assumption", label: "Unverified assumption" },
-    { value: "info", label: "Informational note" },
-    { value: "comment", label: "Comment" },
-    { value: "checked", label: "Checked / verified" },
-    { value: "needs_review", label: "Needs review" },
-    { value: "logic_mistake", label: "Logic mistake" },
-];
+function tagLabel(slug: string): string {
+    return TAG_LABELS[slug] ?? slug.replace(/_/g, " ");
+}
+
+/* ── Card colors by category + severity ── */
+const CATEGORY_COLORS = {
+    check: { bg: "#e6f4ea", border: "#6abf69", dot: "#2e7d32" },
+    info: { bg: "#eef4ff", border: "#b0c9f0", dot: "#5b9bd5" },
+    issue: {
+        question: { bg: "#fff8e6", border: "#e6c84a", dot: "#d4a017" },
+        warning: { bg: "#fff3e0", border: "#e6994a", dot: "#e67700" },
+        error: { bg: "#fff0f0", border: "#e68a8a", dot: "#d44" },
+    },
+} as const;
+
+function cardColors(ann: Annotation) {
+    if (ann.category === "check") return CATEGORY_COLORS.check;
+    if (ann.category === "info") return CATEGORY_COLORS.info;
+    const sev = ann.severity as "question" | "warning" | "error";
+    return CATEGORY_COLORS.issue[sev] ?? CATEGORY_COLORS.issue.question;
+}
+
+/* ── Lifecycle action label per category ── */
+function resolveLabel(category: string): string {
+    if (category === "check") return "Revoke";
+    if (category === "info") return "Archive";
+    return "Resolve";
+}
 
 /* ── Layout: position annotation groups near their block Y ── */
 interface LayoutGroup {
     blockId: string;
     targetY: number;
-    height: number; // estimated total height of this group
+    height: number;
 }
 
 function resolvePositions(
@@ -59,11 +95,9 @@ function resolvePositions(
             : -1;
 
     if (activeIdx >= 0) {
-        // Active group sits exactly at its target
         const active = sorted[activeIdx];
         result.set(active.blockId, active.targetY);
 
-        // Above active: pack upward
         let ceiling = active.targetY;
         for (let i = activeIdx - 1; i >= 0; i--) {
             const g = sorted[i];
@@ -72,7 +106,6 @@ function resolvePositions(
             ceiling = y;
         }
 
-        // Below active: pack downward
         let floor = active.targetY + active.height + CARD_GAP;
         for (let i = activeIdx + 1; i < sorted.length; i++) {
             const g = sorted[i];
@@ -81,7 +114,6 @@ function resolvePositions(
             floor = y + g.height + CARD_GAP;
         }
     } else {
-        // No active: greedy top-down
         let minY = 0;
         for (const g of sorted) {
             const y = Math.max(g.targetY, minY);
@@ -103,7 +135,7 @@ function sCurve(blockY: number, cardY: number): string {
     return `M ${x0},${y0} C ${mx},${y0} ${mx},${y1} ${x1},${y1}`;
 }
 
-/* ── Inline Markdown renderer (reuse remark/rehype plugins) ── */
+/* ── Inline Markdown renderer ── */
 function AnnotationMessage({ text }: { text: string }) {
     return (
         <Markdown
@@ -116,7 +148,7 @@ function AnnotationMessage({ text }: { text: string }) {
     );
 }
 
-/* ── Editable message: click to edit, blur/Enter to save ── */
+/* ── Editable message ── */
 function EditableMessage({
     annotation,
     docId,
@@ -126,12 +158,12 @@ function EditableMessage({
 }) {
     const { updateAnnotation } = useAnnotationStore();
     const [editing, setEditing] = useState(false);
-    const [draft, setDraft] = useState(annotation.message);
+    const [draft, setDraft] = useState(annotation.body);
 
     const save = async () => {
         const trimmed = draft.trim();
-        if (trimmed && trimmed !== annotation.message) {
-            await updateAnnotation(docId, annotation.id, { message: trimmed });
+        if (trimmed !== annotation.body) {
+            await updateAnnotation(docId, annotation.id, { body: trimmed });
         }
         setEditing(false);
     };
@@ -149,7 +181,7 @@ function EditableMessage({
                         save();
                     }
                     if (e.key === "Escape") {
-                        setDraft(annotation.message);
+                        setDraft(annotation.body);
                         setEditing(false);
                     }
                 }}
@@ -164,12 +196,16 @@ function EditableMessage({
             className="annotation-card-message annotation-card-message-clickable"
             onClick={(e) => {
                 e.stopPropagation();
-                setDraft(annotation.message);
+                setDraft(annotation.body);
                 setEditing(true);
             }}
             title="Click to edit"
         >
-            <AnnotationMessage text={annotation.message} />
+            {annotation.body ? (
+                <AnnotationMessage text={annotation.body} />
+            ) : (
+                <span style={{ color: "#aaa", fontStyle: "italic" }}>Add comment...</span>
+            )}
         </div>
     );
 }
@@ -186,21 +222,19 @@ export default function AnnotationPanel({ readerRef }: Props) {
     const { activeBlockId } = useUIStore();
     const panelRef = useRef<HTMLDivElement>(null);
 
-    // Block Y positions (relative to reader scroll-content top)
     const [blockYMap, setBlockYMap] = useState<Map<string, number>>(new Map());
     const [contentHeight, setContentHeight] = useState(1000);
 
-    // Hide-checked toggle
     const [hideChecked, setHideChecked] = useState(false);
 
     // Form state
     const [addingForBlock, setAddingForBlock] = useState<string | null>(null);
-    const [formType, setFormType] = useState("gap");
-    const [formSev, setFormSev] = useState<"info" | "warning" | "error">("warning");
-    const [formMsg, setFormMsg] = useState("");
+    const [formCategory, setFormCategory] = useState<"check" | "info" | "issue">("issue");
+    const [formTags, setFormTags] = useState<string[]>([]);
+    const [formSev, setFormSev] = useState<"question" | "warning" | "error">("warning");
+    const [formBody, setFormBody] = useState("");
     const [saving, setSaving] = useState(false);
 
-    // Measure block positions from the reader DOM
     const measureBlocks = useCallback(() => {
         const reader = readerRef.current;
         if (!reader) return;
@@ -213,7 +247,6 @@ export default function AnnotationPanel({ readerRef }: Props) {
         setBlockYMap(map);
     }, [readerRef]);
 
-    // Scroll-sync panel with reader + re-measure on scroll/resize
     useEffect(() => {
         const reader = readerRef.current;
         const panel = panelRef.current;
@@ -224,7 +257,6 @@ export default function AnnotationPanel({ readerRef }: Props) {
             measureBlocks();
         };
 
-        // Prevent independent scrolling of the panel
         const preventScroll = (e: WheelEvent) => {
             e.preventDefault();
             reader.scrollTop += e.deltaY;
@@ -245,45 +277,46 @@ export default function AnnotationPanel({ readerRef }: Props) {
         };
     }, [readerRef, measureBlocks]);
 
-    // Reset add-form when selection changes
     useEffect(() => {
         setAddingForBlock(null);
     }, [activeBlockId]);
 
-    // Group annotations by block_id, applying hideChecked filter
+    // Reset tags when category changes
+    useEffect(() => {
+        setFormTags([]);
+    }, [formCategory]);
+
+    // Group annotations by start_block, applying hideChecked filter
     const grouped = useMemo(() => {
         const map = new Map<string, Annotation[]>();
         for (const a of annotations) {
-            // If hideChecked, skip checked annotations (unless on the active block)
             if (
                 hideChecked &&
-                a.annotation_type === "checked" &&
-                a.block_id !== activeBlockId
+                a.category === "check" &&
+                a.start_block !== activeBlockId
             ) {
                 continue;
             }
-            const arr = map.get(a.block_id) ?? [];
+            const arr = map.get(a.start_block) ?? [];
             arr.push(a);
-            map.set(a.block_id, arr);
+            map.set(a.start_block, arr);
         }
         return map;
     }, [annotations, hideChecked, activeBlockId]);
 
-    // All block IDs that need a slot (have annotations, or are selected)
     const slotBlockIds = useMemo(() => {
         const ids = new Set(grouped.keys());
         if (activeBlockId) ids.add(activeBlockId);
         return ids;
     }, [grouped, activeBlockId]);
 
-    // Build layout
     const layoutGroups = useMemo(
         () =>
             Array.from(slotBlockIds).map((blockId) => {
                 const anns = grouped.get(blockId) ?? [];
                 let items = anns.length;
                 if (blockId === activeBlockId) {
-                    items += addingForBlock === blockId ? 3 : 1; // form ≈ 3 cards
+                    items += addingForBlock === blockId ? 4 : 1;
                 }
                 return {
                     blockId,
@@ -299,7 +332,6 @@ export default function AnnotationPanel({ readerRef }: Props) {
         [layoutGroups, activeBlockId]
     );
 
-    // Panel inner height: at least reader height, or enough for the last card
     const panelHeight = useMemo(() => {
         let max = contentHeight;
         for (const [blockId, y] of positions) {
@@ -309,18 +341,25 @@ export default function AnnotationPanel({ readerRef }: Props) {
         return max;
     }, [positions, layoutGroups, contentHeight]);
 
-    // Handlers
+    const toggleTag = (slug: string) => {
+        setFormTags((prev) =>
+            prev.includes(slug) ? prev.filter((t) => t !== slug) : [...prev, slug]
+        );
+    };
+
     const handleCreate = async () => {
-        if (!docId || !addingForBlock || !formMsg.trim()) return;
+        if (!docId || !addingForBlock) return;
         setSaving(true);
         try {
             await createAnnotation(docId, {
-                block_id: addingForBlock,
-                annotation_type: formType,
-                severity: formSev,
-                message: formMsg.trim(),
+                start_block: addingForBlock,
+                category: formCategory,
+                tags: formTags,
+                ...(formCategory === "issue" ? { severity: formSev } : {}),
+                body: formBody.trim(),
             });
-            setFormMsg("");
+            setFormBody("");
+            setFormTags([]);
             setAddingForBlock(null);
         } catch (err: unknown) {
             const axErr = err as { response?: { data?: unknown } };
@@ -346,7 +385,7 @@ export default function AnnotationPanel({ readerRef }: Props) {
                         checked={hideChecked}
                         onChange={() => setHideChecked(!hideChecked)}
                     />
-                    Hide checked
+                    Hide checks
                 </label>
             </div>
 
@@ -414,14 +453,14 @@ export default function AnnotationPanel({ readerRef }: Props) {
                             }}
                         >
                             {anns.map((ann) => {
-                                const sev = cardColors(ann);
+                                const colors = cardColors(ann);
                                 return (
                                     <div
                                         key={ann.id}
                                         className="annotation-card"
                                         style={{
-                                            background: sev.bg,
-                                            borderLeft: `3px solid ${sev.border}`,
+                                            background: colors.bg,
+                                            borderLeft: `3px solid ${colors.border}`,
                                             opacity: ann.resolved ? 0.5 : 1,
                                             marginBottom: CARD_GAP,
                                         }}
@@ -434,16 +473,18 @@ export default function AnnotationPanel({ readerRef }: Props) {
                                                         width: 8,
                                                         height: 8,
                                                         borderRadius: "50%",
-                                                        background: sev.dot,
+                                                        background: colors.dot,
                                                         marginRight: 6,
                                                     }}
                                                 />
-                                                <strong>
-                                                    {ann.annotation_type.replace(
-                                                        /_/g,
-                                                        " "
-                                                    )}
+                                                <strong style={{ textTransform: "capitalize" }}>
+                                                    {ann.category}
                                                 </strong>
+                                                {ann.severity && (
+                                                    <span className="annotation-severity-badge" style={{ marginLeft: 6 }}>
+                                                        {ann.severity}
+                                                    </span>
+                                                )}
                                             </span>
                                             <span className="annotation-card-meta">
                                                 {ann.source === "agent"
@@ -451,6 +492,16 @@ export default function AnnotationPanel({ readerRef }: Props) {
                                                     : "Human"}
                                             </span>
                                         </div>
+                                        {/* Tag chips */}
+                                        {ann.tags.length > 0 && (
+                                            <div className="annotation-tag-chips">
+                                                {ann.tags.map((t) => (
+                                                    <span key={t} className="annotation-tag-chip">
+                                                        {tagLabel(t)}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                         <EditableMessage
                                             annotation={ann}
                                             docId={docId!}
@@ -472,7 +523,7 @@ export default function AnnotationPanel({ readerRef }: Props) {
                                                         )
                                                     }
                                                 />
-                                                Resolved
+                                                {resolveLabel(ann.category)}
                                             </label>
                                             <button
                                                 className="btn btn-sm btn-danger"
@@ -505,61 +556,78 @@ export default function AnnotationPanel({ readerRef }: Props) {
                             {addingForBlock === blockId && (
                                 <div className="annotation-form">
                                     <label>
-                                        Type
+                                        Category
                                         <select
-                                            value={formType}
+                                            value={formCategory}
                                             onChange={(e) =>
-                                                setFormType(e.target.value)
-                                            }
-                                        >
-                                            {ANN_TYPES.map((t) => (
-                                                <option
-                                                    key={t.value}
-                                                    value={t.value}
-                                                >
-                                                    {t.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                    <label>
-                                        Severity
-                                        <select
-                                            value={formSev}
-                                            onChange={(e) =>
-                                                setFormSev(
-                                                    e.target.value as
-                                                        | "info"
-                                                        | "warning"
-                                                        | "error"
+                                                setFormCategory(
+                                                    e.target.value as "check" | "info" | "issue"
                                                 )
                                             }
                                         >
+                                            <option value="issue">Issue</option>
+                                            <option value="check">Check</option>
                                             <option value="info">Info</option>
-                                            <option value="warning">
-                                                Warning
-                                            </option>
-                                            <option value="error">Error</option>
                                         </select>
                                     </label>
+
+                                    {/* Tags as checkboxes */}
+                                    <fieldset className="annotation-form-tags">
+                                        <legend>Tags</legend>
+                                        {(TAG_CATALOG[formCategory] ?? []).map((t) => (
+                                            <label key={t.slug} className="annotation-tag-option">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formTags.includes(t.slug)}
+                                                    onChange={() => toggleTag(t.slug)}
+                                                />
+                                                {t.label}
+                                            </label>
+                                        ))}
+                                    </fieldset>
+
+                                    {/* Severity — only for issues */}
+                                    {formCategory === "issue" && (
+                                        <label>
+                                            Severity
+                                            <select
+                                                value={formSev}
+                                                onChange={(e) =>
+                                                    setFormSev(
+                                                        e.target.value as
+                                                            | "question"
+                                                            | "warning"
+                                                            | "error"
+                                                    )
+                                                }
+                                            >
+                                                <option value="question">
+                                                    Question
+                                                </option>
+                                                <option value="warning">
+                                                    Warning
+                                                </option>
+                                                <option value="error">Error</option>
+                                            </select>
+                                        </label>
+                                    )}
+
                                     <label>
-                                        Message
+                                        Comment
                                         <textarea
-                                            value={formMsg}
+                                            value={formBody}
                                             onChange={(e) =>
-                                                setFormMsg(e.target.value)
+                                                setFormBody(e.target.value)
                                             }
                                             rows={3}
-                                            placeholder="Describe the issue... (supports $\LaTeX$)"
+                                            placeholder="Describe... (supports $\LaTeX$)"
                                         />
                                     </label>
                                     <div style={{ display: "flex", gap: 8 }}>
                                         <button
                                             className="btn btn-primary"
                                             onClick={handleCreate}
-                                            disabled={
-                                                saving || !formMsg.trim()
-                                            }
+                                            disabled={saving}
                                         >
                                             {saving ? "Saving..." : "Save"}
                                         </button>
@@ -567,7 +635,8 @@ export default function AnnotationPanel({ readerRef }: Props) {
                                             className="btn btn-sm"
                                             onClick={() => {
                                                 setAddingForBlock(null);
-                                                setFormMsg("");
+                                                setFormBody("");
+                                                setFormTags([]);
                                             }}
                                         >
                                             Cancel

@@ -4,7 +4,7 @@ import type { Annotation } from "../types/models";
 
 interface AnnotationStore {
     annotations: Annotation[];
-    filters: { source: string[]; severity: string[] };
+    filters: { source: string[]; severity: string[]; category: string[] };
 
     fetchAnnotations: (docId: string) => Promise<void>;
     createAnnotation: (
@@ -22,7 +22,7 @@ interface AnnotationStore {
 
 export const useAnnotationStore = create<AnnotationStore>((set) => ({
     annotations: [],
-    filters: { source: [], severity: [] },
+    filters: { source: [], severity: [], category: [] },
 
     fetchAnnotations: async (docId: string) => {
         set({ annotations: [] }); // clear stale data before fetch

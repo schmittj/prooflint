@@ -87,49 +87,51 @@ const CONTAINER_TYPES = new Set([
     "proof",
 ]);
 
-const SEVERITY_RANK: Record<string, number> = { info: 1, warning: 2, error: 3 };
+const SEVERITY_RANK: Record<string, number> = { question: 1, warning: 2, error: 3 };
 
-const SEVERITY_STYLES: Record<string, React.CSSProperties> = {
-    info: { borderLeft: "3px solid #5b9bd5" },
-    warning: { background: "#fff8e1" },
+const ISSUE_STYLES: Record<string, React.CSSProperties> = {
+    question: { background: "#fff8e1" },
+    warning: { background: "#fff3e0" },
     error: { background: "#fff0f0" },
 };
 
-const CHECKED_STYLES: Record<string, React.CSSProperties> = {
+const INFO_STYLE: React.CSSProperties = { borderLeft: "3px solid #5b9bd5" };
+
+const CHECK_STYLES: Record<string, React.CSSProperties> = {
     human: { background: "#e6f4ea" },
     agent: { background: "#f0faf0" },
 };
 
 function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
-    // Separate checks from issue annotations
     const issues = annotations.filter(
-        (a) => a.annotation_type !== "checked" && !a.resolved
+        (a) => a.category === "issue" && !a.resolved
     );
     const checks = annotations.filter(
-        (a) => a.annotation_type === "checked" && !a.resolved
+        (a) => a.category === "check" && !a.resolved
+    );
+    const infos = annotations.filter(
+        (a) => a.category === "info" && !a.resolved
     );
 
-    // If there are unresolved warning/error issues, those take priority
+    // Issues take priority
     if (issues.length > 0) {
         const worst = issues.reduce((max, a) =>
             (SEVERITY_RANK[a.severity] ?? 0) > (SEVERITY_RANK[max.severity] ?? 0)
                 ? a
                 : max
         );
-        if (worst.severity === "warning" || worst.severity === "error") {
-            return SEVERITY_STYLES[worst.severity] ?? {};
-        }
+        return ISSUE_STYLES[worst.severity] ?? {};
     }
 
-    // If checked, show green (human = darker, agent = lighter)
+    // Then info
+    if (infos.length > 0) {
+        return INFO_STYLE;
+    }
+
+    // Then checks (human = darker green, agent = lighter)
     if (checks.length > 0) {
         const hasHumanCheck = checks.some((a) => a.source === "human");
-        return CHECKED_STYLES[hasHumanCheck ? "human" : "agent"];
-    }
-
-    // Only info-level issues remain
-    if (issues.length > 0) {
-        return SEVERITY_STYLES.info;
+        return CHECK_STYLES[hasHumanCheck ? "human" : "agent"];
     }
 
     return {};
@@ -188,7 +190,6 @@ export default function BlockRenderer({
                     remarkPlugins={[remarkMath]}
                     rehypePlugins={[rehypeMathjax]}
                     components={{
-                        // Render paragraphs as inline spans to avoid nested <p> tags
                         p: ({ children }) => <span>{children}</span>,
                     }}
                 >

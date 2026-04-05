@@ -47,7 +47,7 @@ function sectionAnnotationCounts(
     for (const b of blocks) {
         const anns = annotationsByBlock.get(b.block_id) ?? [];
         for (const a of anns) {
-            if (a.resolved || a.annotation_type === "checked") continue;
+            if (a.resolved || a.category === "check") continue;
             if (a.severity === "error") error++;
             else if (a.severity === "warning") warning++;
             else info++;
@@ -89,12 +89,14 @@ export default function DocumentView() {
         return (parentId: string) => map.get(parentId) ?? [];
     }, [blocks]);
 
+    // TODO: once multi-block spans exist, index each annotation under every
+    // block it covers (start_block through end_block), not just start_block.
     const annotationsByBlock = useMemo(() => {
         const map = new Map<string, Annotation[]>();
         for (const a of annotations) {
-            const arr = map.get(a.block_id) ?? [];
+            const arr = map.get(a.start_block) ?? [];
             arr.push(a);
-            map.set(a.block_id, arr);
+            map.set(a.start_block, arr);
         }
         return map;
     }, [annotations]);
@@ -186,12 +188,12 @@ export default function DocumentView() {
                                         {b.label ? ` (${b.label})` : ""}
                                     </span>
                                     {(annotationsByBlock.get(b.block_id)?.filter(
-                                        (a) => !a.resolved && a.annotation_type !== "checked"
+                                        (a) => !a.resolved && a.category === "issue"
                                     ).length ?? 0) > 0 && (
                                         <span className="badge badge-warning">
                                             {annotationsByBlock
                                                 .get(b.block_id)!
-                                                .filter((a) => !a.resolved && a.annotation_type !== "checked")
+                                                .filter((a) => !a.resolved && a.category === "issue")
                                                 .length}
                                         </span>
                                     )}
@@ -214,8 +216,8 @@ export default function DocumentView() {
                 <p style={{ color: "#888", fontSize: "0.9em", marginBottom: "8px" }}>
                     {currentDocument.source_format} &middot;{" "}
                     {currentDocument.preset} &middot; {blocks.length} blocks
-                    {annotations.filter((a) => !a.resolved && a.annotation_type !== "checked").length > 0 &&
-                        ` \u00b7 ${annotations.filter((a) => !a.resolved && a.annotation_type !== "checked").length} open flags`}
+                    {annotations.filter((a) => !a.resolved && a.category === "issue").length > 0 &&
+                        ` \u00b7 ${annotations.filter((a) => !a.resolved && a.category === "issue").length} open flags`}
                 </p>
 
                 <VerificationProgress

@@ -336,6 +336,59 @@
     margin: 0 0 16px;
 }
 
+/* ── Tag chips ── */
+.annotation-tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0;
+}
+.annotation-tag-chip {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.06);
+    color: #555;
+}
+
+/* ── Severity badge (inline) ── */
+.annotation-severity-badge {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.08);
+    color: #666;
+    text-transform: capitalize;
+}
+
+/* ── Tag form fieldset ── */
+.annotation-form-tags {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin: 0;
+}
+.annotation-form-tags legend {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #555;
+    padding: 0 4px;
+}
+.annotation-tag-option {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 6px !important;
+    font-size: 0.8rem;
+    font-weight: 400 !important;
+    cursor: pointer;
+    padding: 2px 0;
+}
+.annotation-tag-option input[type="checkbox"] {
+    margin: 0;
+    accent-color: #4a6fa5;
+}
+
 /* ── Mobile: stack vertically ── */
 @media (max-width: 900px) {
     .doc-layout {

@@ -5,5 +5,5 @@ from .models import Annotation
 
 @admin.register(Annotation)
 class AnnotationAdmin(admin.ModelAdmin):
-    list_display = ["annotation_type", "block_id", "source", "severity", "resolved"]
-    list_filter = ["source", "severity", "annotation_type"]
+    list_display = ["category", "start_block", "source", "severity", "resolved"]
+    list_filter = ["source", "severity", "category"]

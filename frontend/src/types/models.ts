@@ -33,19 +33,31 @@ export interface Block {
 
 export interface Annotation {
     id: string;
-    block_id: string;
-    sentence_id: string;
-    anchor_offset_start: number | null;
-    anchor_offset_end: number | null;
+    // anchor
+    start_block: string;
+    end_block: string;
+    start_offset: number;
+    end_offset: number;
     anchor_quote: string;
+    // provenance
     source: "human" | "agent";
+    author: string;
     agent_run: string | null;
     chunk: string | null;
-    annotation_type: string;
-    severity: "info" | "warning" | "error";
-    message: string;
     confidence: number | null;
+    // content
+    category: "check" | "info" | "issue";
+    tags: string[];
+    severity: "" | "question" | "warning" | "error";
+    body: string;
+    metadata: Record<string, unknown>;
+    // lifecycle
     resolved: boolean;
+    resolved_at: string | null;
+    resolved_by: string;
+    // links
+    related_annotations: string[];
+    // timestamps
     created_at: string;
     updated_at: string;
 }
