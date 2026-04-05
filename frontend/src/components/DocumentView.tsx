@@ -1,164 +1,298 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { useDocumentStore } from "../stores/documentStore";
+import { useAnnotationStore } from "../stores/annotationStore";
 import { useUIStore } from "../stores/uiStore";
 import BlockRenderer from "./BlockRenderer";
+import CheckToggle from "./CheckToggle";
+import VerificationProgress from "./VerificationProgress";
+import AnnotationPanel from "./AnnotationPanel";
+import type { Annotation, Block } from "../types/models";
+import "./DocumentView.css";
+
+/** Group blocks under section headings for the sidebar */
+interface SidebarSection {
+    heading: Block | null;
+    children: Block[];
+}
+
+function buildSections(topLevelBlocks: Block[]): SidebarSection[] {
+    const sections: SidebarSection[] = [];
+    let current: SidebarSection = { heading: null, children: [] };
+
+    for (const b of topLevelBlocks) {
+        if (b.block_type === "section_heading") {
+            if (current.heading || current.children.length > 0) {
+                sections.push(current);
+            }
+            current = { heading: b, children: [] };
+        } else {
+            current.children.push(b);
+        }
+    }
+    if (current.heading || current.children.length > 0) {
+        sections.push(current);
+    }
+    return sections;
+}
+
+/** Count annotations per block_id, bucketed by max severity */
+function sectionAnnotationCounts(
+    blocks: Block[],
+    annotationsByBlock: Map<string, Annotation[]>
+) {
+    let info = 0,
+        warning = 0,
+        error = 0;
+    for (const b of blocks) {
+        const anns = annotationsByBlock.get(b.block_id) ?? [];
+        for (const a of anns) {
+            if (a.resolved || a.annotation_type === "checked") continue;
+            if (a.severity === "error") error++;
+            else if (a.severity === "warning") warning++;
+            else info++;
+        }
+    }
+    return { info, warning, error };
+}
 
 export default function DocumentView() {
     const { id } = useParams<{ id: string }>();
     const { currentDocument, blocks, loading, fetchDocument, fetchBlocks } =
         useDocumentStore();
-    const { activeBlockId } = useUIStore();
+    const { annotations, fetchAnnotations } = useAnnotationStore();
+    const { activeBlockId, sidebarCollapsed, toggleSidebar, setActiveBlock } = useUIStore();
 
     useEffect(() => {
         if (id) {
             fetchDocument(id);
             fetchBlocks(id);
+            fetchAnnotations(id);
         }
-    }, [id, fetchDocument, fetchBlocks]);
+    }, [id, fetchDocument, fetchBlocks, fetchAnnotations]);
+
+    // Derived data
+    const topLevelBlocks = useMemo(
+        () => blocks.filter((b) => !b.parent),
+        [blocks]
+    );
+
+    const childrenOf = useMemo(() => {
+        const map = new Map<string, Block[]>();
+        for (const b of blocks) {
+            if (b.parent) {
+                const arr = map.get(b.parent) ?? [];
+                arr.push(b);
+                map.set(b.parent, arr);
+            }
+        }
+        return (parentId: string) => map.get(parentId) ?? [];
+    }, [blocks]);
+
+    const annotationsByBlock = useMemo(() => {
+        const map = new Map<string, Annotation[]>();
+        for (const a of annotations) {
+            const arr = map.get(a.block_id) ?? [];
+            arr.push(a);
+            map.set(a.block_id, arr);
+        }
+        return map;
+    }, [annotations]);
+
+    const sections = useMemo(
+        () => buildSections(topLevelBlocks),
+        [topLevelBlocks]
+    );
+
+    const readerRef = useRef<HTMLElement>(null);
 
     if (loading || !currentDocument) {
         return <p>Loading document...</p>;
     }
 
-    // Filter to top-level blocks only (no parent)
-    const topLevelBlocks = blocks.filter((b) => !b.parent);
-    // Group children by parent
-    const childrenOf = (parentId: string) =>
-        blocks.filter((b) => b.parent === parentId);
+    const scrollToBlock = (blockId: string, alsoSelect = false) => {
+        if (alsoSelect) setActiveBlock(blockId);
+        const el = document.querySelector(`[data-block-id="${blockId}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
 
     return (
-        <div style={{ display: "flex", gap: "16px" }}>
-                {/* Summary Sidebar */}
-                <aside
-                    style={{
-                        width: "200px",
-                        flexShrink: 0,
-                        borderRight: "1px solid #e0e0e0",
-                        paddingRight: "16px",
-                    }}
-                >
-                    <h3>Summary</h3>
-                    {blocks.length > 0 ? (
-                        <div style={{ fontSize: "0.85em" }}>
-                            <p style={{ color: "#666" }}>
-                                {blocks.length} blocks parsed
-                            </p>
-                            <ul
-                                style={{
-                                    listStyle: "none",
-                                    padding: 0,
-                                    margin: 0,
-                                }}
+        <div className="doc-layout">
+            {/* ── Left sidebar: structural summary ── */}
+            <aside className={`doc-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+                <h3 style={{ margin: "0 0 8px", fontSize: "1rem" }}>
+                    Structure
+                </h3>
+                <p style={{ color: "#888", fontSize: "0.8rem", margin: "0 0 12px" }}>
+                    {blocks.length} blocks
+                </p>
+
+                {sections.map((section, i) => {
+                    // Include top-level blocks AND their descendants
+                    const topLevel = section.heading
+                        ? [section.heading, ...section.children]
+                        : section.children;
+                    const allBlocks = topLevel.flatMap((b) => [
+                        b,
+                        ...childrenOf(b.id),
+                    ]);
+                    const counts = sectionAnnotationCounts(
+                        allBlocks,
+                        annotationsByBlock
+                    );
+                    const headingLabel = section.heading
+                        ? section.heading.content_original
+                        : "Preamble";
+
+                    return (
+                        <div key={i} className="sidebar-section">
+                            <div
+                                className="sidebar-section-heading"
+                                style={{ cursor: "pointer" }}
+                                onClick={() =>
+                                    section.heading &&
+                                    scrollToBlock(section.heading.block_id)
+                                }
                             >
-                                {topLevelBlocks.map((b) => (
-                                    <li
-                                        key={b.block_id}
-                                        style={{
-                                            padding: "4px 8px",
-                                            marginBottom: "2px",
-                                            borderRadius: "4px",
-                                            cursor: "pointer",
-                                            fontSize: "0.9em",
-                                            background:
-                                                activeBlockId === b.block_id
-                                                    ? "#e8f0fe"
-                                                    : "transparent",
-                                        }}
-                                        onClick={() => {
-                                            const el =
-                                                document.querySelector(
-                                                    `[data-block-id="${b.block_id}"]`
-                                                );
-                                            el?.scrollIntoView({
-                                                behavior: "smooth",
-                                                block: "center",
-                                            });
-                                        }}
-                                    >
-                                        <span style={{ color: "#aaa" }}>
-                                            {b.block_id}
-                                        </span>{" "}
-                                        <span>
-                                            {b.block_type === "section_heading"
-                                                ? b.content_original
-                                                : b.block_type}
+                                <span>{headingLabel}</span>
+                                <span>
+                                    {counts.error > 0 && (
+                                        <span className="badge badge-error">
+                                            {counts.error}
                                         </span>
-                                    </li>
-                                ))}
-                            </ul>
+                                    )}
+                                    {counts.warning > 0 && (
+                                        <span className="badge badge-warning">
+                                            {counts.warning}
+                                        </span>
+                                    )}
+                                    {counts.info > 0 && (
+                                        <span className="badge badge-info">
+                                            {counts.info}
+                                        </span>
+                                    )}
+                                </span>
+                            </div>
+                            {section.children.map((b) => (
+                                <div
+                                    key={b.block_id}
+                                    className={`sidebar-item ${activeBlockId === b.block_id ? "active" : ""}`}
+                                    onClick={() => scrollToBlock(b.block_id, true)}
+                                >
+                                    <span className="sidebar-item-label">
+                                        {b.block_type === "paragraph"
+                                            ? "para"
+                                            : b.block_type}
+                                        {b.label ? ` (${b.label})` : ""}
+                                    </span>
+                                    {(annotationsByBlock.get(b.block_id)?.filter(
+                                        (a) => !a.resolved && a.annotation_type !== "checked"
+                                    ).length ?? 0) > 0 && (
+                                        <span className="badge badge-warning">
+                                            {annotationsByBlock
+                                                .get(b.block_id)!
+                                                .filter((a) => !a.resolved && a.annotation_type !== "checked")
+                                                .length}
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
                         </div>
-                    ) : (
-                        <p style={{ color: "#888", fontSize: "0.9em" }}>
-                            Run Triage analysis to generate a structural
-                            summary.
-                        </p>
-                    )}
-                </aside>
+                    );
+                })}
+            </aside>
 
-                {/* Document Reader */}
-                <section style={{ flex: 1, minWidth: 0 }}>
-                    <h2>{currentDocument.title || "Untitled document"}</h2>
-                    <p style={{ color: "#888", fontSize: "0.9em" }}>
-                        {currentDocument.source_format} &middot;{" "}
-                        {currentDocument.preset} &middot; {blocks.length} blocks
-                    </p>
+            {/* ── Center: document reader ── */}
+            <section className="doc-reader" ref={readerRef}>
+                <button className="sidebar-toggle" onClick={toggleSidebar}>
+                    {sidebarCollapsed ? "\u25b6" : "\u25c0"}
+                </button>
 
-                    {blocks.length === 0 ? (
-                        <div
-                            style={{
-                                padding: "16px",
-                                background: "#f9f9f9",
-                                borderRadius: "8px",
-                                fontFamily: "monospace",
-                                whiteSpace: "pre-wrap",
-                                fontSize: "0.9em",
-                            }}
-                        >
-                            No blocks yet. Upload a document to see it parsed.
-                        </div>
-                    ) : (
-                        topLevelBlocks.map((block) => {
-                            const children = childrenOf(block.id);
-                            const hasChildren = children.length > 0;
-                            return (
-                                <div key={block.id}>
-                                    <BlockRenderer
-                                        block={block}
-                                        isContainer={hasChildren}
+                <h2 style={{ marginTop: 0 }}>
+                    {currentDocument.title || "Untitled document"}
+                </h2>
+                <p style={{ color: "#888", fontSize: "0.9em", marginBottom: "8px" }}>
+                    {currentDocument.source_format} &middot;{" "}
+                    {currentDocument.preset} &middot; {blocks.length} blocks
+                    {annotations.filter((a) => !a.resolved && a.annotation_type !== "checked").length > 0 &&
+                        ` \u00b7 ${annotations.filter((a) => !a.resolved && a.annotation_type !== "checked").length} open flags`}
+                </p>
+
+                <VerificationProgress
+                    blocks={blocks}
+                    annotationsByBlock={annotationsByBlock}
+                />
+
+                {blocks.length === 0 ? (
+                    <div
+                        style={{
+                            padding: "16px",
+                            background: "#f9f9f9",
+                            borderRadius: "8px",
+                            fontFamily: "monospace",
+                            whiteSpace: "pre-wrap",
+                            fontSize: "0.9em",
+                        }}
+                    >
+                        No blocks yet. Upload a document to see it parsed.
+                    </div>
+                ) : (
+                    topLevelBlocks.map((block) => {
+                        const children = childrenOf(block.id);
+                        const hasChildren = children.length > 0;
+                        const blockAnns =
+                            annotationsByBlock.get(block.block_id) ?? [];
+                        return (
+                            <div key={block.id} style={{ position: "relative" }}>
+                                {block.block_type !== "section_heading" && (
+                                    <CheckToggle
+                                        blockId={block.block_id}
+                                        docId={id!}
+                                        annotations={blockAnns}
                                     />
-                                    {children.map((child) => (
+                                )}
+                                <BlockRenderer
+                                    block={block}
+                                    isContainer={hasChildren}
+                                    annotations={blockAnns}
+                                />
+                                {children.map((child) => {
+                                    const childAnns =
+                                        annotationsByBlock.get(
+                                            child.block_id
+                                        ) ?? [];
+                                    return (
                                         <div
                                             key={child.id}
                                             style={{
+                                                position: "relative",
                                                 marginLeft: hasChildren
                                                     ? "16px"
                                                     : "0",
                                             }}
                                         >
-                                            <BlockRenderer block={child} />
+                                            <CheckToggle
+                                                blockId={child.block_id}
+                                                docId={id!}
+                                                annotations={childAnns}
+                                            />
+                                            <BlockRenderer
+                                                block={child}
+                                                annotations={childAnns}
+                                            />
                                         </div>
-                                    ))}
-                                </div>
-                            );
-                        })
-                    )}
-                </section>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })
+                )}
+            </section>
 
-                {/* Right Panel */}
-                <aside
-                    style={{
-                        width: "350px",
-                        flexShrink: 0,
-                        borderLeft: "1px solid #e0e0e0",
-                        paddingLeft: "16px",
-                    }}
-                >
-                    <h3>Annotations</h3>
-                    <p style={{ color: "#888", fontSize: "0.9em" }}>
-                        No annotations yet.
-                    </p>
-                </aside>
+            {/* ── Right panel: annotations ── */}
+            <aside className="doc-right-panel">
+                <AnnotationPanel readerRef={readerRef} />
+            </aside>
         </div>
     );
 }

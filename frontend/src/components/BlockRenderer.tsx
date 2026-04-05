@@ -1,12 +1,13 @@
 import Markdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeMathjax from "rehype-mathjax";
-import type { Block } from "../types/models";
+import type { Annotation, Block } from "../types/models";
 import { useUIStore } from "../stores/uiStore";
 
 interface BlockRendererProps {
     block: Block;
     isContainer?: boolean;
+    annotations?: Annotation[];
 }
 
 const TYPE_STYLES: Record<string, React.CSSProperties> = {
@@ -86,19 +87,73 @@ const CONTAINER_TYPES = new Set([
     "proof",
 ]);
 
+const SEVERITY_RANK: Record<string, number> = { info: 1, warning: 2, error: 3 };
+
+const SEVERITY_STYLES: Record<string, React.CSSProperties> = {
+    info: { borderLeft: "3px solid #5b9bd5" },
+    warning: { background: "#fff8e1" },
+    error: { background: "#fff0f0" },
+};
+
+const CHECKED_STYLES: Record<string, React.CSSProperties> = {
+    human: { background: "#e6f4ea" },
+    agent: { background: "#f0faf0" },
+};
+
+function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
+    // Separate checks from issue annotations
+    const issues = annotations.filter(
+        (a) => a.annotation_type !== "checked" && !a.resolved
+    );
+    const checks = annotations.filter(
+        (a) => a.annotation_type === "checked" && !a.resolved
+    );
+
+    // If there are unresolved warning/error issues, those take priority
+    if (issues.length > 0) {
+        const worst = issues.reduce((max, a) =>
+            (SEVERITY_RANK[a.severity] ?? 0) > (SEVERITY_RANK[max.severity] ?? 0)
+                ? a
+                : max
+        );
+        if (worst.severity === "warning" || worst.severity === "error") {
+            return SEVERITY_STYLES[worst.severity] ?? {};
+        }
+    }
+
+    // If checked, show green (human = darker, agent = lighter)
+    if (checks.length > 0) {
+        const hasHumanCheck = checks.some((a) => a.source === "human");
+        return CHECKED_STYLES[hasHumanCheck ? "human" : "agent"];
+    }
+
+    // Only info-level issues remain
+    if (issues.length > 0) {
+        return SEVERITY_STYLES.info;
+    }
+
+    return {};
+}
+
 export default function BlockRenderer({
     block,
     isContainer,
+    annotations = [],
 }: BlockRendererProps) {
     const { activeBlockId, setActiveBlock } = useUIStore();
     const isActive = activeBlockId === block.block_id;
 
+    const overlayStyle = computeBlockOverlay(annotations);
+
     const baseStyle = TYPE_STYLES[block.block_type] ?? TYPE_STYLES.paragraph;
+    const needsCheckSpace = block.block_type !== "section_heading";
     const style: React.CSSProperties = {
         ...baseStyle,
+        ...overlayStyle,
         cursor: "pointer",
         borderRadius: "4px",
-        transition: "background 0.15s",
+        transition: "background 0.15s, outline 0.15s",
+        ...(needsCheckSpace ? { paddingRight: "28px" } : {}),
         ...(isActive
             ? { outline: "2px solid #4a6fa5", outlineOffset: "2px" }
             : {}),

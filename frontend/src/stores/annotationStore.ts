@@ -25,6 +25,7 @@ export const useAnnotationStore = create<AnnotationStore>((set) => ({
     filters: { source: [], severity: [] },
 
     fetchAnnotations: async (docId: string) => {
+        set({ annotations: [] }); // clear stale data before fetch
         const res = await axios.get(
             `/api/v1/documents/${docId}/annotations/`
         );

@@ -38,3 +38,10 @@ Thumbs.db
 
 # Docker
 pgdata/
+
+# Local tool config
+.claude/
+.codex
+
+# Scratch notes, specs, feedback
+notes/
