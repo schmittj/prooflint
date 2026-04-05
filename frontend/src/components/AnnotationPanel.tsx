@@ -77,58 +77,66 @@ function resolveLabel(category: string): string {
 /* ── Layout: position annotation groups near their block Y ── */
 interface LayoutGroup {
     blockId: string;
-    targetY: number;
+    /** Desired vertical CENTER of this card group (block midpoint) */
+    targetMidY: number;
     height: number;
 }
 
+/**
+ * Position card groups so each is vertically centered on its targetMidY,
+ * then resolve collisions. The active group gets priority placement.
+ */
 function resolvePositions(
     groups: LayoutGroup[],
     activeBlockId: string | null
 ): Map<string, number> {
     if (groups.length === 0) return new Map();
-    const sorted = [...groups].sort((a, b) => a.targetY - b.targetY);
+    const sorted = [...groups].sort((a, b) => a.targetMidY - b.targetMidY);
     const result = new Map<string, number>();
+
+    // Center-align: top = midY - height/2
+    const idealTop = (g: LayoutGroup) => Math.max(0, g.targetMidY - g.height / 2);
 
     const activeIdx =
         activeBlockId != null
             ? sorted.findIndex((g) => g.blockId === activeBlockId)
             : -1;
 
-    if (activeIdx >= 0) {
-        const active = sorted[activeIdx];
-        result.set(active.blockId, active.targetY);
+    const anchorIdx = activeIdx >= 0 ? activeIdx : 0;
+    const anchor = sorted[anchorIdx];
+    result.set(anchor.blockId, idealTop(anchor));
 
-        let ceiling = active.targetY;
-        for (let i = activeIdx - 1; i >= 0; i--) {
-            const g = sorted[i];
-            const y = Math.max(0, Math.min(g.targetY, ceiling - g.height - CARD_GAP));
-            result.set(g.blockId, y);
-            ceiling = y;
-        }
+    // Pack upward from anchor
+    let ceiling = idealTop(anchor);
+    for (let i = anchorIdx - 1; i >= 0; i--) {
+        const g = sorted[i];
+        const y = Math.max(0, Math.min(idealTop(g), ceiling - g.height - CARD_GAP));
+        result.set(g.blockId, y);
+        ceiling = y;
+    }
 
-        let floor = active.targetY + active.height + CARD_GAP;
-        for (let i = activeIdx + 1; i < sorted.length; i++) {
-            const g = sorted[i];
-            const y = Math.max(g.targetY, floor);
-            result.set(g.blockId, y);
-            floor = y + g.height + CARD_GAP;
-        }
-    } else {
-        let minY = 0;
-        for (const g of sorted) {
-            const y = Math.max(g.targetY, minY);
-            result.set(g.blockId, y);
-            minY = y + g.height + CARD_GAP;
-        }
+    // Pack downward from anchor
+    let floor = idealTop(anchor) + anchor.height + CARD_GAP;
+    for (let i = anchorIdx + 1; i < sorted.length; i++) {
+        const g = sorted[i];
+        const y = Math.max(idealTop(g), floor);
+        result.set(g.blockId, y);
+        floor = y + g.height + CARD_GAP;
     }
 
     return result;
 }
 
 /* ── S-curve SVG path (explicit Y endpoints) ── */
+/** Single-block: starts at dot (x=4) */
 function sCurve(leftY: number, rightY: number): string {
     const mx = CURVE_INDENT / 2;
     return `M 4,${leftY} C ${mx},${leftY} ${mx},${rightY} ${CURVE_INDENT},${rightY}`;
+}
+/** Bracket: starts at bracket bar (x=7) */
+function sCurveBracket(leftY: number, rightY: number): string {
+    const mx = CURVE_INDENT / 2;
+    return `M 7,${leftY} C ${mx},${leftY} ${mx},${rightY} ${CURVE_INDENT},${rightY}`;
 }
 
 /* ── Inline Markdown renderer ── */
@@ -304,12 +312,13 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
         setFormTags([]);
     }, [formCategory]);
 
-    // Scroll form into view when it opens
+    // Scroll the reader to ensure the active block is visible (panel syncs via scroll listener)
     useEffect(() => {
-        if (addingForBlock && formRef.current) {
-            formRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (addingForBlock) {
+            const el = readerRef.current?.querySelector(`[data-block-id="${addingForBlock}"]`);
+            el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
-    }, [addingForBlock]);
+    }, [addingForBlock, readerRef]);
 
     // Group annotations by start_block, applying category visibility filters
     const grouped = useMemo(() => {
@@ -336,16 +345,29 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
             Array.from(slotBlockIds).map((blockId) => {
                 const anns = grouped.get(blockId) ?? [];
                 let items = anns.length;
-                if (blockId === activeBlockId) {
-                    items += addingForBlock === blockId ? 4 : 1;
+                // Only add form height when the form is actually open
+                if (blockId === activeBlockId && addingForBlock === blockId) {
+                    items += 3;
+                }
+                // Compute block midpoint as target center
+                const blockTop = blockYMap.get(blockId) ?? 0;
+                const blockBot = blockBottomMap.get(blockId) ?? blockTop + 28;
+                let midY = (blockTop + blockBot) / 2;
+                // For multi-block selection, use the selection midpoint
+                if (blockId === activeBlockId && activeBlockIds.length > 1) {
+                    const firstTop = blockYMap.get(activeBlockIds[0]);
+                    const lastBot = blockBottomMap.get(activeBlockIds[activeBlockIds.length - 1]);
+                    if (firstTop != null && lastBot != null) {
+                        midY = (firstTop + lastBot) / 2;
+                    }
                 }
                 return {
                     blockId,
-                    targetY: blockYMap.get(blockId) ?? 0,
+                    targetMidY: midY,
                     height: Math.max(items, 1) * EST_CARD_H,
                 };
             }),
-        [slotBlockIds, grouped, activeBlockId, addingForBlock, blockYMap]
+        [slotBlockIds, grouped, activeBlockId, activeBlockIds, addingForBlock, blockYMap, blockBottomMap]
     );
 
     const positions = useMemo(
@@ -465,7 +487,7 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                                 <line x1={1} y1={lastBot} x2={7} y2={lastBot}
                                     stroke="#4a6fa5" strokeWidth={1.5} />
                                 {cardMid != null && (
-                                    <path d={sCurve(midY, cardMid)}
+                                    <path d={sCurveBracket(midY, cardMid)}
                                         fill="none" stroke="#4a6fa5" strokeWidth={1.5} />
                                 )}
                             </g>
@@ -498,7 +520,7 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
                                             stroke="#ccc" strokeWidth={1} />
                                         <line x1={1} y1={endBot} x2={7} y2={endBot}
                                             stroke="#ccc" strokeWidth={1} />
-                                        <path d={sCurve(midY, cardMid)}
+                                        <path d={sCurveBracket(midY, cardMid)}
                                             fill="none" stroke="#ddd" strokeWidth={1} />
                                     </g>
                                 );

@@ -215,7 +215,14 @@ export default function DocumentView() {
             </aside>
 
             {/* ── Center: document reader ── */}
-            <section className="doc-reader" ref={readerRef}>
+            <section className="doc-reader" ref={readerRef} onClick={(e) => {
+                // Deselect when clicking whitespace — but not on blocks (they stopPropagation)
+                // or interactive elements like the sidebar toggle
+                const el = e.target as HTMLElement;
+                if (!el.closest("button, [data-block-id], .check-toggle")) {
+                    setActiveBlock(null);
+                }
+            }}>
                 <button className="sidebar-toggle" onClick={toggleSidebar}>
                     {sidebarCollapsed ? "\u25b6" : "\u25c0"}
                 </button>

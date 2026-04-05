@@ -144,7 +144,7 @@ export default function BlockRenderer({
     annotations = [],
     orderedBlockIds = [],
 }: BlockRendererProps) {
-    const { activeBlockIds, setActiveBlock, setBlockRange } = useUIStore();
+    const { activeBlockIds, anchorBlockId, setActiveBlock, setBlockRange } = useUIStore();
     const isActive = activeBlockIds.includes(block.block_id);
 
     const overlayStyle = computeBlockOverlay(annotations);
@@ -173,10 +173,9 @@ export default function BlockRenderer({
             style={style}
             onClick={(e) => {
                 e.stopPropagation();
-                if (e.shiftKey && activeBlockIds.length > 0) {
-                    // Prevent browser text selection on shift+click
+                if (e.shiftKey && anchorBlockId) {
                     window.getSelection()?.removeAllRanges();
-                    setBlockRange(activeBlockIds[0], block.block_id, orderedBlockIds);
+                    setBlockRange(anchorBlockId, block.block_id, orderedBlockIds);
                 } else {
                     setActiveBlock(isActive ? null : block.block_id);
                 }
