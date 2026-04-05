@@ -45,7 +45,19 @@ export default function App() {
                 <Link to="/" style={{ textDecoration: "none", color: "inherit" }}>
                     <h1 style={{ margin: 0, fontSize: "1.4rem" }}>ProofLint</h1>
                 </Link>
-                <StopButton />
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <Link
+                        to="/settings"
+                        style={{
+                            fontSize: "0.9rem",
+                            color: "#555",
+                            textDecoration: "none",
+                        }}
+                    >
+                        Settings
+                    </Link>
+                    <StopButton />
+                </div>
             </header>
             <main style={{ flex: 1, padding: "24px" }}>
                 <Outlet />

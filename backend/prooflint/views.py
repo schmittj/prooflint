@@ -23,12 +23,13 @@ ENV_FILE = Path(settings.BASE_DIR).parent / ".env"
 ALLOWED_KEYS = {
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
+    "GOOGLE_API_KEY",
     "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
 }
 
 # Keys whose values are masked on read.
-SECRET_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+SECRET_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"}
 
 
 def _is_localhost(request):

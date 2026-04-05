@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import App from "./App";
 import DocumentList from "./components/DocumentList";
 import DocumentView from "./components/DocumentView";
+import SettingsPage from "./components/SettingsPage";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -12,6 +13,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <Route path="/" element={<App />}>
                     <Route index element={<DocumentList />} />
                     <Route path="documents/:id" element={<DocumentView />} />
+                    <Route path="settings" element={<SettingsPage />} />
                 </Route>
             </Routes>
         </BrowserRouter>
