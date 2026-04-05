@@ -36,6 +36,10 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
+# Launcher stamps
+.install-stamp
+.migrate-stamp
+
 # Docker
 pgdata/
 
