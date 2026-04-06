@@ -7,12 +7,15 @@ interface UIStore {
     anchorBlockId: string | null;
     activeChunkId: string | null;
     sidebarCollapsed: boolean;
+    /** Bumped when content layout changes and annotation positions need recalculating */
+    layoutVersion: number;
 
     setRightPanel: (panel: "annotations" | "chat") => void;
     setActiveBlock: (blockId: string | null) => void;
     setBlockRange: (fromId: string, toId: string, orderedIds: string[]) => void;
     setActiveChunk: (chunkId: string | null) => void;
     toggleSidebar: () => void;
+    bumpLayout: () => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -21,6 +24,7 @@ export const useUIStore = create<UIStore>((set) => ({
     anchorBlockId: null,
     activeChunkId: null,
     sidebarCollapsed: false,
+    layoutVersion: 0,
 
     setRightPanel: (panel) => set({ rightPanel: panel }),
     setActiveBlock: (blockId) =>
@@ -40,4 +44,6 @@ export const useUIStore = create<UIStore>((set) => ({
     setActiveChunk: (chunkId) => set({ activeChunkId: chunkId }),
     toggleSidebar: () =>
         set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+    bumpLayout: () =>
+        set((state) => ({ layoutVersion: state.layoutVersion + 1 })),
 }));

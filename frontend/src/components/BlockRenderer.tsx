@@ -111,7 +111,7 @@ function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
         (a) => a.category === "check" && !a.resolved
     );
     const infos = annotations.filter(
-        (a) => a.category === "info" && !a.resolved
+        (a) => a.category === "info" && !a.resolved && !a.tags.includes("summary")
     );
 
     // Issues take priority

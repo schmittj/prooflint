@@ -30,27 +30,49 @@ argument, break it into logical chunks, and produce a structured review.
 You will receive the document with block IDs as markers (e.g. [p3], [thm1]). \
 Use these exact IDs when anchoring your annotations — do not invent new ones.
 
-For each chunk of the argument:
-- Summarize what it accomplishes in the overall proof structure.
-- Flag any issues you find, choosing the most specific tag:
+# Chunks
+Break the document into logical chunks (groups of consecutive blocks that \
+form a single proof step or conceptual unit). For each chunk, provide:
+- chunk_id: a unique identifier like "chunk_1", "chunk_2", etc.
+- source_ids: the block IDs covered by this chunk
+- summary: what this chunk accomplishes in the overall proof structure
+- confidence: how confident you are in the correctness of this chunk (0.0–1.0)
+
+# Annotations
+Annotations are anchored to specific blocks via start_block and end_block. \
+Always narrow the anchor to the specific block(s) most relevant to the \
+annotation — not the whole chunk. For example, if an issue only affects \
+one paragraph inside a multi-paragraph chunk, anchor it to that single \
+paragraph's block ID.
+
+## Issue annotations (category: "issue")
+Flag any problems you find, choosing the most specific tag:
   - "gap": a genuinely missing logical step — a real hole in the reasoning
   - "handwaving": vague language that obscures what concrete step is being taken
   - "incomplete_argument": steps are skipped but could plausibly be filled in
   - "assumption_mismatch": a result is applied outside its valid context
   - "calculation_error": sign error, forgotten term, wrong inequality direction
   - "typo": spelling, grammar, or obvious notational slip
-- Produce noteworthy observations as info annotations (tag "remark").
-- Produce an expanded argument (tag "expanded_argument") that makes every \
-logical step explicit, anchored to the chunk's block range.
 
 Severity reflects impact on the argument's validity:
 - "error": may invalidate the argument or a key step
 - "warning": a real problem, but likely fixable without changing the structure
 - "question": you are unsure whether this is a genuine issue
 
+## Info annotations (category: "info")
+- tag "remark": noteworthy observations about the argument
+- tag "expanded_argument": for paragraphs that skip steps or omit detail, \
+produce an expanded version that fills in the missing reasoning, e.g. \
+"Indeed, by [property], we have [step], which together with [earlier result] \
+gives [conclusion]." Produce one expanded_argument per paragraph that needs \
+it — if a chunk has multiple dense paragraphs, expand each one separately \
+with its own annotation anchored to that paragraph's block ID.
+
+# Confidence
 Confidence (0.0–1.0) reflects how sure YOU are about each annotation — \
 not the proof's correctness.
 
+# Summary
 Your summary should help a reader understand the proof's overall structure \
 and where to focus attention.\
 """

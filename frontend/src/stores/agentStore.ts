@@ -37,6 +37,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     fetchRuns: async (docId) => {
         // Clear previous document's state before fetching
         get().stopPolling();
+        set({ runs: [], activeRun: null });
 
         const res = await axios.get(`/api/v1/documents/${docId}/agents/runs/`);
         const runs: AgentRun[] = res.data.results ?? res.data;

@@ -317,7 +317,7 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
     const { id: docId } = useParams<{ id: string }>();
     const { annotations, createAnnotation, updateAnnotation, deleteAnnotation } =
         useAnnotationStore();
-    const { activeBlockIds, setActiveBlock, setBlockRange } = useUIStore();
+    const { activeBlockIds, setActiveBlock, setBlockRange, layoutVersion } = useUIStore();
     const activeBlockId = activeBlockIds[0] ?? null;
     const panelRef = useRef<HTMLDivElement>(null);
 
@@ -401,6 +401,11 @@ export default function AnnotationPanel({ readerRef, orderedBlockIds }: Props) {
             ro.disconnect();
         };
     }, [readerRef, measureBlocks]);
+
+    // Re-measure block positions when layout changes (e.g. BotSummary expand/collapse)
+    useEffect(() => {
+        measureBlocks();
+    }, [layoutVersion, measureBlocks]);
 
     // Measure toolbar height for Y offset correction
     useEffect(() => {

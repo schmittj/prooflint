@@ -257,6 +257,25 @@ def _store_results(
         )
         chunk_map[c.chunk_id] = chunk
 
+    # Create chunk summary annotations (Info → Summary)
+    for c in bot_output.chunks:
+        chunk = chunk_map.get(c.chunk_id)
+        if chunk and c.summary and c.source_ids:
+            Annotation.objects.create(
+                document=document,
+                start_block=c.source_ids[0],
+                end_block=c.source_ids[-1],
+                source="agent",
+                author="GlobalAnnotatorBot",
+                agent_run=run,
+                chunk=chunk,
+                confidence=c.confidence,
+                category="info",
+                tags=["summary"],
+                severity="",
+                body=c.summary,
+            )
+
     # Create Annotations
     for ann in bot_output.annotations:
         chunk = chunk_map.get(ann.chunk_id)

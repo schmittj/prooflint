@@ -10,6 +10,7 @@ import VerificationProgress from "./VerificationProgress";
 import AnnotationPanel from "./AnnotationPanel";
 import BotWizard from "./BotWizard";
 import BotStatusBar from "./BotStatusBar";
+import BotSummary from "./BotSummary";
 import type { Annotation, Block } from "../types/models";
 import "./DocumentView.css";
 
@@ -262,6 +263,8 @@ export default function DocumentView() {
                     blocks={blocks}
                     annotationsByBlock={annotationsByBlock}
                 />
+
+                <BotSummary />
 
                 {blocks.length === 0 ? (
                     <div
