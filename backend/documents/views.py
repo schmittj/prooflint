@@ -46,9 +46,16 @@ class DocumentViewSet(viewsets.ModelViewSet):
         try:
             blocks = ingest_document(doc)
             logger.info("Ingested document %s: %d blocks", doc.id, len(blocks))
-        except Exception:
+        except Exception as exc:
             logger.exception("Ingestion failed for document %s", doc.id)
-            # Document is still created, just without blocks
+            doc.delete()
+            return Response(
+                {
+                    "detail": "Failed to ingest document. Check the selected format and input content.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Auto-trigger GlobalAnnotatorBot for triage preset
         if doc.preset == "triage" and settings.OPENAI_API_KEY:

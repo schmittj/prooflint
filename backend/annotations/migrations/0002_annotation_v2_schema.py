@@ -8,7 +8,6 @@ This is a destructive migration — existing annotation rows will be deleted.
 Acceptable for MVP with minimal test data.
 """
 
-import uuid
 from django.db import migrations, models
 
 

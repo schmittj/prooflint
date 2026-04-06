@@ -1,7 +1,5 @@
 """Expand user-defined macros in LaTeX/Markdown source text."""
 
-import re
-
 
 def expand_macros(
     source: str, macros: dict

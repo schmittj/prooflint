@@ -1,10 +1,20 @@
 # ProofLint
 
-AI-assisted proof review workbench.  Upload mathematical writing (LaTeX or
+AI-assisted proof review workbench.  Paste mathematical writing (LaTeX or
 Markdown+LaTeX), get structural analysis with AI-generated annotations, and
-review proofs with an interactive chatbot.
+review proofs in a local browser workbench.
 
 **Status:** pre-MVP development.
+
+Current pre-MVP scope:
+- local document ingestion/rendering
+- manual annotations
+- OpenAI-backed `GlobalAnnotatorBot` runs
+
+Planned but not complete yet:
+- chatbot / conversational sidebar
+- Docker-based setup
+- source-span / "view source" grounding
 
 ---
 
@@ -33,13 +43,16 @@ On subsequent runs it skips straight to step 5 — startup is near-instant.
 
 ### Configuring API keys
 
-ProofLint needs an Anthropic API key to power its AI features.  You can set
-it in **two ways:**
+Current AI review features use the OpenAI Responses API. You can set your key
+in **two ways:**
 
 - **In the browser:** open the Settings page and paste your key.  A clear
   notice confirms that all data stays on your local machine.
 - **Manually:** copy `.env.example` to `.env` and fill in your
-  `ANTHROPIC_API_KEY`.
+  `OPENAI_API_KEY`.
+
+`ANTHROPIC_API_KEY` and `GOOGLE_API_KEY` are currently stored only for planned
+provider integrations.
 
 ### Launcher options
 
@@ -83,12 +96,10 @@ npm install
 npm run dev
 ```
 
-### With Docker
+### Docker
 
-```bash
-cp .env.example .env   # edit to add your ANTHROPIC_API_KEY
-docker compose up
-```
+Docker setup is planned, but it is not currently a supported pre-MVP path.
+Use the launcher or the manual developer setup above for now.
 
 ---
 
@@ -100,7 +111,7 @@ docker compose up
 | Frontend | React 18 + TypeScript + Vite + Zustand |
 | Ingestion | Pandoc AST + panflute |
 | Math rendering | MathJax 3 via react-markdown |
-| Database | SQLite (local) / PostgreSQL (Docker) |
+| Database | SQLite (local pre-MVP) |
 
 See `ProofLint-MVP-Spec.md` for the full technical specification.
 

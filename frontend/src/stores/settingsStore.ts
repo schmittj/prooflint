@@ -1,6 +1,25 @@
 import { create } from "zustand";
 import axios from "axios";
 
+function withoutKey(record: Record<string, string | boolean>, key: string) {
+    const rest = { ...record };
+    delete rest[key];
+    return rest;
+}
+
+function describeError(error: unknown): string {
+    const maybeAxios = error as {
+        response?: { data?: { error?: string; detail?: string } };
+        message?: string;
+    };
+    return (
+        maybeAxios.response?.data?.error ||
+        maybeAxios.response?.data?.detail ||
+        maybeAxios.message ||
+        String(error)
+    );
+}
+
 interface SettingsState {
     /** Values as returned by the server (masked for secrets). */
     serverValues: Record<string, string>;
@@ -38,8 +57,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                 serverValues: res.data.settings,
                 loading: false,
             });
-        } catch (err: any) {
-            set({ error: err.message, loading: false });
+        } catch (error) {
+            set({ error: describeError(error), loading: false });
         }
     },
 
@@ -56,16 +75,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         if (!dirty[key]) return;
         const value = localEdits[key] ?? "";
 
-        set((s) => ({ saving: { ...s.saving, [key]: true } }));
+        set((s) => ({
+            saving: { ...s.saving, [key]: true },
+            error: null,
+            saved: { ...s.saved, [key]: false },
+        }));
         try {
             await axios.post("/api/v1/settings/", { [key]: value });
+            const res = await axios.get("/api/v1/settings/");
             set((s) => ({
                 saving: { ...s.saving, [key]: false },
                 saved: { ...s.saved, [key]: true },
-                serverValues: { ...s.serverValues, [key]: value ? "configured" : "" },
+                dirty: withoutKey(s.dirty, key) as Record<string, boolean>,
+                localEdits: withoutKey(s.localEdits, key) as Record<string, string>,
+                serverValues: {
+                    ...s.serverValues,
+                    ...res.data.settings,
+                },
+                error: null,
             }));
-        } catch {
-            set((s) => ({ saving: { ...s.saving, [key]: false } }));
+        } catch (error) {
+            set((s) => ({
+                saving: { ...s.saving, [key]: false },
+                saved: { ...s.saved, [key]: false },
+                error: describeError(error),
+            }));
         }
     },
 }));

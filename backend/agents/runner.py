@@ -237,6 +237,12 @@ def _store_results(
     bot_output: BotOutput,
 ) -> None:
     """Create Chunk and Annotation objects from parsed BotOutput."""
+    if _should_clear_previous_agent_annotations(run):
+        Annotation.objects.filter(
+            document=document,
+            source="agent",
+        ).exclude(agent_run=run).delete()
+
     # Store summary on the run
     run.raw_output = run.raw_output or {}
     run.raw_output["summary"] = bot_output.summary
@@ -293,3 +299,8 @@ def _store_results(
             severity=ann.severity,
             body=ann.body,
         )
+
+
+def _should_clear_previous_agent_annotations(run: AgentRun) -> bool:
+    options = (run.config or {}).get("options", {})
+    return bool(options.get("clear_previous_agent_annotations"))

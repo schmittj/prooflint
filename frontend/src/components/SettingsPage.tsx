@@ -25,16 +25,16 @@ function useDebouncedSave(key: string, delayMs = 800) {
 /* ------------------------------------------------------------------ */
 
 const API_KEY_META: Record<string, { label: string; placeholder: string }> = {
-    ANTHROPIC_API_KEY: {
-        label: "Anthropic (Claude)",
-        placeholder: "sk-ant-…",
-    },
     OPENAI_API_KEY: {
-        label: "OpenAI (GPT)",
+        label: "OpenAI (current bot provider)",
         placeholder: "sk-…",
     },
+    ANTHROPIC_API_KEY: {
+        label: "Anthropic (planned)",
+        placeholder: "sk-ant-…",
+    },
     GOOGLE_API_KEY: {
-        label: "Google (Gemini)",
+        label: "Google / Gemini (planned)",
         placeholder: "AIza…",
     },
 };
@@ -197,7 +197,7 @@ function ModelDefaults() {
                         debouncedSaveModel();
                     }}
                     onBlur={() => saveField("DEFAULT_MODEL")}
-                    placeholder="gpt-5.4"
+                    placeholder="gpt-5.4-mini"
                     style={{
                         width: "100%",
                         padding: "8px 10px",
@@ -266,7 +266,7 @@ function ModelDefaults() {
                         color: "#888",
                     }}
                 >
-                    xhigh = deepest analysis (30–50 min)
+                    low is the recommended pre-MVP default
                 </span>
             </div>
         </>
@@ -280,6 +280,7 @@ function ModelDefaults() {
 export default function SettingsPage() {
     const fetchSettings = useSettingsStore((s) => s.fetchSettings);
     const loading = useSettingsStore((s) => s.loading);
+    const error = useSettingsStore((s) => s.error);
 
     useEffect(() => {
         fetchSettings();
@@ -294,6 +295,18 @@ export default function SettingsPage() {
                 All data stays on your machine. Changes are saved automatically.
             </p>
 
+            {error && (
+                <p
+                    style={{
+                        color: "#d32f2f",
+                        fontSize: "0.9rem",
+                        marginTop: 0,
+                    }}
+                >
+                    {error}
+                </p>
+            )}
+
             <h3 style={{ marginBottom: 12, marginTop: 28 }}>API Keys</h3>
             <p
                 style={{
@@ -303,8 +316,9 @@ export default function SettingsPage() {
                     marginBottom: 16,
                 }}
             >
-                Add at least one key to enable AI review features. You can also
-                edit the <code>.env</code> file directly.
+                Current pre-MVP AI review uses the OpenAI Responses API. You can
+                store Anthropic and Gemini keys here for planned integrations, but
+                they are not used by the bot yet.
             </p>
             {Object.keys(API_KEY_META).map((key) => (
                 <ApiKeyField key={key} envKey={key} />

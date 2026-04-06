@@ -6,7 +6,7 @@ import rehypeMathjax from "rehype-mathjax";
 import { useDocumentStore } from "../stores/documentStore";
 
 export default function DocumentList() {
-    const { documents, loading, fetchDocuments, createDocument, deleteDocument } =
+    const { documents, loading, error, fetchDocuments, createDocument, deleteDocument } =
         useDocumentStore();
     const navigate = useNavigate();
 
@@ -25,8 +25,12 @@ export default function DocumentList() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const doc = await createDocument(source, sourceFormat, title, preset);
-        navigate(`/documents/${doc.id}`);
+        try {
+            const doc = await createDocument(source, sourceFormat, title, preset);
+            navigate(`/documents/${doc.id}`);
+        } catch {
+            // Store error is rendered below the form.
+        }
     };
 
     return (
@@ -41,7 +45,7 @@ export default function DocumentList() {
             >
                 <h2>Documents</h2>
                 <button onClick={() => setShowUpload(!showUpload)}>
-                    {showUpload ? "Cancel" : "Upload Document"}
+                    {showUpload ? "Cancel" : "New Document"}
                 </button>
             </div>
 
@@ -122,7 +126,7 @@ export default function DocumentList() {
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                         <button type="submit" disabled={loading}>
-                            {loading ? "Uploading..." : "Upload"}
+                            {loading ? "Creating..." : "Create Document"}
                         </button>
                         <button
                             type="button"
@@ -152,6 +156,9 @@ export default function DocumentList() {
                             </Markdown>
                         </div>
                     )}
+                    {error && (
+                        <p style={{ marginTop: 12, color: "#c53030" }}>{error}</p>
+                    )}
                 </form>
             )}
 
@@ -159,7 +166,7 @@ export default function DocumentList() {
                 <p>Loading...</p>
             ) : documents.length === 0 ? (
                 <p>
-                    No documents yet. Click &quot;Upload Document&quot; to get
+                    No documents yet. Click &quot;New Document&quot; to get
                     started.
                 </p>
             ) : (

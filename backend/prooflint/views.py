@@ -5,9 +5,7 @@ so they never travel in full over the wire (the user submits new values
 but never sees old ones in plain text).
 """
 
-import json
 import os
-import re
 import signal
 from pathlib import Path
 

@@ -392,7 +392,7 @@ def ensure_env_file():
             "# ProofLint configuration\n"
             "# Set your API key here, or use the Settings page in the browser.\n"
             "\n"
-            "ANTHROPIC_API_KEY=\n"
+            "OPENAI_API_KEY=\n"
             "DEBUG=true\n"
         )
         info("Created .env file")
@@ -454,7 +454,7 @@ def _has_api_key():
         return False
     for line in ENV_FILE.read_text().splitlines():
         stripped = line.strip()
-        if stripped.startswith("ANTHROPIC_API_KEY="):
+        if stripped.startswith("OPENAI_API_KEY="):
             value = stripped.split("=", 1)[1].strip()
             return len(value) > 10
     return False
@@ -589,7 +589,7 @@ def start_servers(conda, dev_mode=False):
     info("Open in your browser: {}".format(url))
     print()
     if not _has_api_key():
-        warn("No API key configured — open Settings in the browser to add one.")
+        warn("No OpenAI API key configured — open Settings in the browser to add one.")
         print()
     info("To stop ProofLint, press Ctrl+C here or close this terminal.")
     print()
@@ -719,7 +719,7 @@ def main():
 
     if not _has_api_key():
         print()
-        warn("No Anthropic API key configured yet.")
+        warn("No OpenAI API key configured yet.")
         info("You can add it in the browser via the Settings page,")
         info("or edit the .env file at the project root.")
 

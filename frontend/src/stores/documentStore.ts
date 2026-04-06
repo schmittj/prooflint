@@ -2,6 +2,19 @@ import { create } from "zustand";
 import axios from "axios";
 import type { Block, Document } from "../types/models";
 
+function describeError(error: unknown): string {
+    const maybeAxios = error as {
+        response?: { data?: { detail?: string; error?: string } };
+        message?: string;
+    };
+    return (
+        maybeAxios.response?.data?.detail ||
+        maybeAxios.response?.data?.error ||
+        maybeAxios.message ||
+        String(error)
+    );
+}
+
 interface DocumentStore {
     documents: Document[];
     currentDocument: Document | null;
@@ -34,7 +47,7 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
             const res = await axios.get("/api/v1/documents/");
             set({ documents: res.data.results ?? res.data, loading: false });
         } catch (e) {
-            set({ error: String(e), loading: false });
+            set({ error: describeError(e), loading: false });
         }
     },
 
@@ -44,7 +57,7 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
             const res = await axios.get(`/api/v1/documents/${id}/`);
             set({ currentDocument: res.data, loading: false });
         } catch (e) {
-            set({ error: String(e), loading: false });
+            set({ error: describeError(e), loading: false });
         }
     },
 
@@ -53,7 +66,7 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
             const res = await axios.get(`/api/v1/documents/${docId}/blocks/`);
             set({ blocks: res.data });
         } catch (e) {
-            set({ error: String(e) });
+            set({ error: describeError(e) });
         }
     },
 
@@ -72,7 +85,7 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
             }));
             return res.data;
         } catch (e) {
-            set({ error: String(e), loading: false });
+            set({ error: describeError(e), loading: false });
             throw e;
         }
     },

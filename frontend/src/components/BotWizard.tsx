@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAgentStore } from "../stores/agentStore";
+import { useAnnotationStore } from "../stores/annotationStore";
 import { useUIStore } from "../stores/uiStore";
 
 interface BotWizardProps {
@@ -22,10 +23,16 @@ const EFFORT_LEVELS = [
 export default function BotWizard({ docId, onClose }: BotWizardProps) {
     const { activeBlockIds } = useUIStore();
     const { launchRun } = useAgentStore();
+    const annotations = useAnnotationStore((s) => s.annotations);
+    const existingAgentAnnotationCount = annotations.filter(
+        (annotation) => annotation.source === "agent"
+    ).length;
 
     const [model, setModel] = useState("gpt-5.4-mini");
     const [effort, setEffort] = useState("low");
     const [produceChecks, setProduceChecks] = useState(false);
+    const [clearPreviousAgentAnnotations, setClearPreviousAgentAnnotations] =
+        useState(existingAgentAnnotationCount > 0);
     const [steeringPrompt, setSteeringPrompt] = useState("");
     const [scopeBlocks, setScopeBlocks] = useState(false);
     const [launching, setLaunching] = useState(false);
@@ -39,7 +46,11 @@ export default function BotWizard({ docId, onClose }: BotWizardProps) {
                 model,
                 reasoning_effort: effort,
                 steering_prompt: steeringPrompt || undefined,
-                options: { produce_checks: produceChecks },
+                options: {
+                    produce_checks: produceChecks,
+                    clear_previous_agent_annotations:
+                        clearPreviousAgentAnnotations,
+                },
                 block_ids: scopeBlocks ? activeBlockIds : undefined,
             });
             onClose();
@@ -183,6 +194,43 @@ export default function BotWizard({ docId, onClose }: BotWizardProps) {
                         </span>
                     </label>
                 </div>
+
+                {existingAgentAnnotationCount > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                fontSize: "0.85rem",
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={clearPreviousAgentAnnotations}
+                                onChange={(e) =>
+                                    setClearPreviousAgentAnnotations(
+                                        e.target.checked
+                                    )
+                                }
+                            />
+                            <span>
+                                <strong>Clear previous AI annotations</strong>{" "}
+                                when this run completes successfully
+                            </span>
+                        </label>
+                        <p
+                            style={{
+                                margin: "6px 0 0 24px",
+                                color: "#666",
+                                fontSize: "0.8rem",
+                            }}
+                        >
+                            {existingAgentAnnotationCount} existing AI annotation
+                            {existingAgentAnnotationCount === 1 ? "" : "s"} found
+                        </p>
+                    </div>
+                )}
 
                 {/* Steering prompt */}
                 <div style={{ marginBottom: 16 }}>
