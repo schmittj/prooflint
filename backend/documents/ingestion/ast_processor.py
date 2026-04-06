@@ -1,5 +1,6 @@
 """Process Pandoc AST into ProofLint blocks with stable IDs."""
 
+import json
 import re
 
 import panflute as pf
@@ -136,7 +137,7 @@ def process_ast(
             if elem.format == "InlineMath":
                 parts.append(f"${elem.text}$")
             else:
-                parts.append(f"\n\n$${elem.text}$$\n\n")
+                parts.append(f"$${elem.text}$$")
         elif isinstance(elem, pf.RawInline):
             parts.append(elem.text)
         elif isinstance(elem, pf.Strong):
@@ -156,30 +157,57 @@ def process_ast(
                 parts.append(f'"{inner}"')
         return "".join(parts)
 
-    def process_para(elem, parent_id: str = "") -> dict:
-        """Process a paragraph element into a block dict."""
-        text = stringify_with_math(elem)
-        block_type = "paragraph"
-        block_id = next_id(block_type)
-
+    def _make_para_block(text: str, parent_id: str = "") -> dict:
+        """Create a paragraph block dict from text."""
+        block_id = next_id("paragraph")
         if parent_id:
             block_id = f"{parent_id}.{block_id}"
-            # Reset paragraph counter within parent scope
-            # (actually, we use global counters for simplicity in MVP)
-
         sentences = split_sentences(text)
-        # Prefix sentence IDs with block ID
         for s in sentences:
             s["id"] = f"{block_id}.{s.pop('id_suffix')}"
-
         return {
             "block_id": block_id,
-            "block_type": block_type,
+            "block_type": "paragraph",
             "content_original": text,
             "content_expanded": text,
             "sentences": sentences,
             "label": "",
         }
+
+    def process_para(elem, parent_id: str = "") -> list[dict]:
+        """Process a paragraph, splitting at display-math boundaries.
+
+        When a Para contains interleaved text and DisplayMath (common when
+        \\[...\\] appears without surrounding blank lines), we split into
+        separate paragraph and equation blocks so remark-math can render
+        display math correctly.
+        """
+        has_display_math = any(
+            isinstance(c, pf.Math) and c.format == "DisplayMath"
+            for c in elem.content
+        )
+        if not has_display_math:
+            return [_make_para_block(stringify_with_math(elem), parent_id)]
+
+        results: list[dict] = []
+        current_inlines: list = []
+
+        def flush_text():
+            nonlocal current_inlines
+            text = "".join(stringify_with_math(c) for c in current_inlines).strip()
+            current_inlines = []
+            if text:
+                results.append(_make_para_block(text, parent_id))
+
+        for child in elem.content:
+            if isinstance(child, pf.Math) and child.format == "DisplayMath":
+                flush_text()
+                results.append(process_math_block(child))
+            else:
+                current_inlines.append(child)
+
+        flush_text()
+        return results
 
     def process_math_block(elem) -> dict:
         """Process a display math block."""
@@ -207,20 +235,22 @@ def process_ast(
             return isinstance(child, pf.Math) and child.format == "DisplayMath"
         return False
 
+    def block_to_markdown(elem) -> str:
+        """Serialize a block-level element to markdown via pandoc."""
+        doc = pf.Doc(elem)
+        return pf.convert_text(
+            json.dumps(doc.to_json()),
+            input_format="json",
+            output_format="markdown",
+            extra_args=["--wrap=none"],
+        ).strip()
+
     def process_list(elem, parent_id: str = "") -> dict:
         """Process a list element into a block dict."""
         block_id = next_id("list")
         if parent_id:
             block_id = f"{parent_id}.{block_id}"
-        # Stringify list items, preserving math
-        items = []
-        for item in elem.content:
-            # Each item is a ListItem containing block elements
-            item_parts = []
-            for child in item.content if hasattr(item, "content") else [item]:
-                item_parts.append(stringify_with_math(child))
-            items.append(" ".join(item_parts))
-        text = "\n".join(f"- {item}" for item in items)
+        text = block_to_markdown(elem)
         return {
             "block_id": block_id,
             "block_type": "list",
@@ -231,11 +261,21 @@ def process_ast(
         }
 
     def _process_blockquote(elem, parent_id: str = "") -> dict:
-        """Process a blockquote element as a leaf block with content."""
+        """Process a blockquote element as a leaf block with content.
+
+        Uses pandoc round-trip on the blockquote's children to preserve
+        multi-paragraph and list structure without the > prefixes.
+        """
         block_id = next_id("blockquote")
         if parent_id:
             block_id = f"{parent_id}.{block_id}"
-        text = stringify_with_math(elem)
+        doc = pf.Doc(*list(elem.content))
+        text = pf.convert_text(
+            json.dumps(doc.to_json()),
+            input_format="json",
+            output_format="markdown",
+            extra_args=["--wrap=none"],
+        ).strip()
         sentences = split_sentences(text)
         for s in sentences:
             s["id"] = f"{block_id}.{s.pop('id_suffix')}"
@@ -248,43 +288,43 @@ def process_ast(
             "label": "",
         }
 
-    def _process_any_element(elem, parent_id: str = "") -> dict | None:
-        """Process any block-level element into a block dict."""
+    def _process_any_element(elem, parent_id: str = "") -> list[dict]:
+        """Process any block-level element into block dicts."""
         if isinstance(elem, pf.Para):
             if is_display_math_para(elem):
-                return process_math_block(elem)
+                return [process_math_block(elem)]
             return process_para(elem, parent_id=parent_id)
         elif isinstance(elem, (pf.BulletList, pf.OrderedList)):
-            return process_list(elem, parent_id=parent_id)
+            return [process_list(elem, parent_id=parent_id)]
         elif isinstance(elem, pf.RawBlock):
             block_id = next_id("raw_latex")
             if parent_id:
                 block_id = f"{parent_id}.{block_id}"
-            return {
+            return [{
                 "block_id": block_id,
                 "block_type": "raw_latex",
                 "content_original": elem.text,
                 "content_expanded": elem.text,
                 "sentences": [],
                 "label": "",
-            }
+            }]
         elif isinstance(elem, pf.BlockQuote):
-            return _process_blockquote(elem, parent_id=parent_id)
+            return [_process_blockquote(elem, parent_id=parent_id)]
         elif isinstance(elem, pf.Div):
             # Nested div — stringify it
             block_id = next_id("paragraph")
             if parent_id:
                 block_id = f"{parent_id}.{block_id}"
             text = stringify_with_math(elem)
-            return {
+            return [{
                 "block_id": block_id,
                 "block_type": "paragraph",
                 "content_original": text,
                 "content_expanded": text,
                 "sentences": split_sentences(text),
                 "label": "",
-            }
-        return None
+            }]
+        return []
 
     for elem in elements:
         if isinstance(elem, pf.Header):
@@ -319,11 +359,9 @@ def process_ast(
                 # Collect all content of the environment
                 child_blocks = []
                 for child in elem.content:
-                    child_block = _process_any_element(
+                    child_blocks.extend(_process_any_element(
                         child, parent_id=block_id
-                    )
-                    if child_block:
-                        child_blocks.append(child_block)
+                    ))
 
                 # Create the environment block (content is in children only)
                 blocks.append(
@@ -340,15 +378,13 @@ def process_ast(
             else:
                 # Unknown div — process children as top-level
                 for child in elem.content:
-                    child_block = _process_any_element(child)
-                    if child_block:
-                        blocks.append(child_block)
+                    blocks.extend(_process_any_element(child))
 
         elif isinstance(elem, pf.Para):
             if is_display_math_para(elem):
                 blocks.append(process_math_block(elem))
             else:
-                blocks.append(process_para(elem))
+                blocks.extend(process_para(elem))
 
         elif isinstance(elem, pf.RawBlock):
             # Check if this is a LaTeX environment that pandoc couldn't parse
@@ -363,11 +399,9 @@ def process_ast(
                 )
                 child_blocks = []
                 for child_elem in body_elements:
-                    child_block = _process_any_element(
+                    child_blocks.extend(_process_any_element(
                         child_elem, parent_id=block_id
-                    )
-                    if child_block:
-                        child_blocks.append(child_block)
+                    ))
 
                 blocks.append(
                     {
