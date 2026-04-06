@@ -87,6 +87,7 @@ class Block(models.Model):
             ("section_heading", "Section Heading"),
             ("list", "List"),
             ("raw_latex", "Raw LaTeX (TikZ etc.)"),
+            ("blockquote", "Blockquote"),
         ],
     )
 

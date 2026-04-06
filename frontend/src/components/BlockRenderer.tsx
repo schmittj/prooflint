@@ -57,6 +57,14 @@ const TYPE_STYLES: Record<string, React.CSSProperties> = {
         padding: "8px 16px",
         margin: "8px 0",
     },
+    blockquote: {
+        borderLeft: "3px solid #a0a0a0",
+        background: "#f9f9f9",
+        padding: "8px 16px",
+        margin: "12px 0",
+        borderRadius: "4px",
+        fontStyle: "italic",
+    },
     equation: {
         textAlign: "center" as const,
         margin: "16px 0",

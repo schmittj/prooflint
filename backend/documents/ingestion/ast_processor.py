@@ -67,6 +67,7 @@ TYPE_PREFIX = {
     "paragraph": "p",
     "list": "list",
     "raw_latex": "raw",
+    "blockquote": "bq",
 }
 
 
@@ -87,7 +88,7 @@ def process_ast(
     Returns:
         List of block dicts ready for Block model creation.
     """
-    fmt = "markdown" if source_format == "markdown" else "latex"
+    fmt = "markdown+tex_math_single_backslash" if source_format == "markdown" else "latex"
     elements = pf.convert_text(expanded_source, input_format=fmt, output_format="panflute")
 
     # Extend theorem-like detection with custom declarations
@@ -135,7 +136,7 @@ def process_ast(
             if elem.format == "InlineMath":
                 parts.append(f"${elem.text}$")
             else:
-                parts.append(f"$${elem.text}$$")
+                parts.append(f"\n\n$${elem.text}$$\n\n")
         elif isinstance(elem, pf.RawInline):
             parts.append(elem.text)
         elif isinstance(elem, pf.Strong):
@@ -229,6 +230,24 @@ def process_ast(
             "label": "",
         }
 
+    def _process_blockquote(elem, parent_id: str = "") -> dict:
+        """Process a blockquote element as a leaf block with content."""
+        block_id = next_id("blockquote")
+        if parent_id:
+            block_id = f"{parent_id}.{block_id}"
+        text = stringify_with_math(elem)
+        sentences = split_sentences(text)
+        for s in sentences:
+            s["id"] = f"{block_id}.{s.pop('id_suffix')}"
+        return {
+            "block_id": block_id,
+            "block_type": "blockquote",
+            "content_original": text,
+            "content_expanded": text,
+            "sentences": sentences,
+            "label": "",
+        }
+
     def _process_any_element(elem, parent_id: str = "") -> dict | None:
         """Process any block-level element into a block dict."""
         if isinstance(elem, pf.Para):
@@ -249,6 +268,8 @@ def process_ast(
                 "sentences": [],
                 "label": "",
             }
+        elif isinstance(elem, pf.BlockQuote):
+            return _process_blockquote(elem, parent_id=parent_id)
         elif isinstance(elem, pf.Div):
             # Nested div — stringify it
             block_id = next_id("paragraph")
@@ -371,6 +392,9 @@ def process_ast(
                         "label": "",
                     }
                 )
+
+        elif isinstance(elem, pf.BlockQuote):
+            blocks.append(_process_blockquote(elem))
 
         elif isinstance(elem, (pf.BulletList, pf.OrderedList)):
             blocks.append(process_list(elem))
