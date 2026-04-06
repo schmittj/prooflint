@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useDocumentStore } from "../stores/documentStore";
 import { useAnnotationStore } from "../stores/annotationStore";
 import { useAgentStore } from "../stores/agentStore";
 import { useUIStore } from "../stores/uiStore";
-import BlockRenderer from "./BlockRenderer";
+import BlockRenderer, { computeBlockOverlay } from "./BlockRenderer";
 import CheckToggle from "./CheckToggle";
 import VerificationProgress from "./VerificationProgress";
 import AnnotationPanel from "./AnnotationPanel";
@@ -20,6 +20,58 @@ function blockPreview(b: Block): string {
     if (!raw) return b.block_type;
     const max = 50;
     return raw.length > max ? raw.slice(0, max) + "\u2026" : raw;
+}
+
+/** Single blue outline around a multi-block selection */
+function SelectionOverlay({ readerRef, activeBlockIds }: {
+    readerRef: React.RefObject<HTMLElement | null>;
+    activeBlockIds: string[];
+}) {
+    const { layoutVersion } = useUIStore();
+    const [style, setStyle] = useState<React.CSSProperties | null>(null);
+    const [resizeTick, setResizeTick] = useState(0);
+
+    // Recompute when the reader container resizes (window resize, sidebar toggle, etc.)
+    useEffect(() => {
+        const reader = readerRef.current;
+        if (!reader) return;
+        const ro = new ResizeObserver(() => setResizeTick((n) => n + 1));
+        ro.observe(reader);
+        return () => ro.disconnect();
+    }, [readerRef]);
+
+    useLayoutEffect(() => {
+        const reader = readerRef.current;
+        if (!reader || activeBlockIds.length < 2) { setStyle(null); return; }
+
+        const rr = reader.getBoundingClientRect();
+        let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+        for (const id of activeBlockIds) {
+            const el = reader.querySelector(`[data-block-id="${id}"]`);
+            if (!el) continue;
+            const er = el.getBoundingClientRect();
+            l = Math.min(l, er.left); r = Math.max(r, er.right);
+            t = Math.min(t, er.top);  b = Math.max(b, er.bottom);
+        }
+        if (t === Infinity) { setStyle(null); return; }
+
+        const pad = 4;
+        setStyle({
+            position: "absolute",
+            left: l - rr.left + reader.scrollLeft - pad,
+            top:  t - rr.top  + reader.scrollTop  - pad,
+            width:  r - l + pad * 2,
+            height: b - t + pad * 2,
+            boxShadow: "0 0 0 2px #4a6fa5",
+            borderRadius: "6px",
+            pointerEvents: "none",
+            zIndex: 5,
+            background: "transparent",
+        });
+    }, [activeBlockIds, readerRef, layoutVersion, resizeTick]);
+
+    if (!style) return null;
+    return <div style={style} />;
 }
 
 /** Group blocks under section headings for the sidebar */
@@ -149,6 +201,28 @@ export default function DocumentView() {
         }
         return map;
     }, [annotations, orderedBlockIds]);
+
+    // Compute color-run positions so adjacent same-color blocks merge visually
+    const colorRunInfo = useMemo(() => {
+        const flat = orderedBlockIds;
+        const bgColors = flat.map((bid) => {
+            const anns = effectiveAnnotations.get(bid) ?? [];
+            const overlay = computeBlockOverlay(anns);
+            return overlay.background as string | undefined;
+        });
+        const info = new Map<string, "first" | "middle" | "last" | "solo">();
+        for (let i = 0; i < flat.length; i++) {
+            const bg = bgColors[i];
+            if (!bg) continue;
+            const prevSame = i > 0 && bgColors[i - 1] === bg;
+            const nextSame = i < flat.length - 1 && bgColors[i + 1] === bg;
+            if (prevSame && nextSame) info.set(flat[i], "middle");
+            else if (prevSame) info.set(flat[i], "last");
+            else if (nextSame) info.set(flat[i], "first");
+            else info.set(flat[i], "solo");
+        }
+        return info;
+    }, [orderedBlockIds, effectiveAnnotations]);
 
     const sections = useMemo(
         () => buildSections(topLevelBlocks),
@@ -353,6 +427,8 @@ export default function DocumentView() {
                                     isContainer={hasChildren}
                                     annotations={blockAnns}
                                     orderedBlockIds={orderedBlockIds}
+                                    colorRunPos={colorRunInfo.get(block.block_id)}
+                                    inMultiSelect={isMulti}
                                 />
                                 {children.map((child) => {
                                     const childAnns =
@@ -376,6 +452,8 @@ export default function DocumentView() {
                                                 block={child}
                                                 annotations={childAnns}
                                                 orderedBlockIds={orderedBlockIds}
+                                                colorRunPos={colorRunInfo.get(child.block_id)}
+                                                inMultiSelect={isMulti}
                                             />
                                         </div>
                                     );
@@ -384,6 +462,7 @@ export default function DocumentView() {
                         );
                     })
                 )}
+                <SelectionOverlay readerRef={readerRef} activeBlockIds={activeBlockIds} />
             </section>
 
             {/* ── Right panel: annotations ── */}

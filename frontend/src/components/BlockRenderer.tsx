@@ -9,6 +9,10 @@ interface BlockRendererProps {
     isContainer?: boolean;
     annotations?: Annotation[];
     orderedBlockIds?: string[];
+    /** Position in a run of same-overlay-color blocks */
+    colorRunPos?: 'first' | 'middle' | 'last' | 'solo';
+    /** When true, skip individual selection box-shadow (overlay handles it) */
+    inMultiSelect?: boolean;
 }
 
 const TYPE_STYLES: Record<string, React.CSSProperties> = {
@@ -103,7 +107,7 @@ const CHECK_STYLES: Record<string, React.CSSProperties> = {
     agent: { background: "#f0faf0" },
 };
 
-function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
+export function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
     const issues = annotations.filter(
         (a) => a.category === "issue" && !a.resolved
     );
@@ -143,11 +147,32 @@ export default function BlockRenderer({
     isContainer,
     annotations = [],
     orderedBlockIds = [],
+    colorRunPos,
+    inMultiSelect,
 }: BlockRendererProps) {
     const { activeBlockIds, anchorBlockId, setActiveBlock, setBlockRange } = useUIStore();
     const isActive = activeBlockIds.includes(block.block_id);
 
     const overlayStyle = computeBlockOverlay(annotations);
+    const overlayBg = overlayStyle.background as string | undefined;
+
+    // Adjust border-radius: flatten internal edges of same-color runs
+    let borderRadius = "4px";
+    if (overlayBg && colorRunPos) {
+        if (colorRunPos === "first") borderRadius = "4px 4px 0 0";
+        else if (colorRunPos === "middle") borderRadius = "0";
+        else if (colorRunPos === "last") borderRadius = "0 0 4px 4px";
+    }
+
+    // Build box-shadow list
+    const shadows: string[] = [];
+    if (isActive && !inMultiSelect) {
+        shadows.push("0 0 0 2px #4a6fa5");
+    }
+    // Bridge: extend overlay color into the margin gap below this block
+    if (overlayBg && (colorRunPos === "first" || colorRunPos === "middle")) {
+        shadows.push(`0 24px 0 0 ${overlayBg}`);
+    }
 
     const baseStyle = TYPE_STYLES[block.block_type] ?? TYPE_STYLES.paragraph;
     const needsCheckSpace = block.block_type !== "section_heading";
@@ -157,12 +182,10 @@ export default function BlockRenderer({
         cursor: "pointer",
         position: "relative",
         zIndex: isActive ? 2 : 1,
-        borderRadius: "4px",
+        borderRadius,
         transition: "background 0.15s, box-shadow 0.15s",
         ...(needsCheckSpace ? { paddingRight: "28px" } : {}),
-        ...(isActive
-            ? { boxShadow: "0 0 0 2px #4a6fa5" }
-            : {}),
+        ...(shadows.length > 0 ? { boxShadow: shadows.join(", ") } : {}),
     };
 
     const label = TYPE_LABELS[block.block_type];
