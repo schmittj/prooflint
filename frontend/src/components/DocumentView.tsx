@@ -114,8 +114,8 @@ export default function DocumentView() {
         return ids;
     }, [topLevelBlocks, childrenOf]);
 
-    // TODO: once multi-block spans exist, index each annotation under every
-    // block it covers (start_block through end_block), not just start_block.
+    // Index each annotation under its start_block (used for sidebar counts
+    // and annotation panel positioning).
     const annotationsByBlock = useMemo(() => {
         const map = new Map<string, Annotation[]>();
         for (const a of annotations) {
@@ -125,6 +125,30 @@ export default function DocumentView() {
         }
         return map;
     }, [annotations]);
+
+    // For rendering overlays: index each annotation under EVERY block it
+    // covers (start_block through end_block).
+    const effectiveAnnotations = useMemo(() => {
+        const map = new Map<string, Annotation[]>();
+        const add = (blockId: string, a: Annotation) => {
+            const arr = map.get(blockId) ?? [];
+            arr.push(a);
+            map.set(blockId, arr);
+        };
+        for (const a of annotations) {
+            add(a.start_block, a);
+            if (a.end_block && a.end_block !== a.start_block) {
+                const si = orderedBlockIds.indexOf(a.start_block);
+                const ei = orderedBlockIds.indexOf(a.end_block);
+                if (si >= 0 && ei >= 0) {
+                    const lo = Math.min(si, ei);
+                    const hi = Math.max(si, ei);
+                    for (let i = lo + 1; i <= hi; i++) add(orderedBlockIds[i], a);
+                }
+            }
+        }
+        return map;
+    }, [annotations, orderedBlockIds]);
 
     const sections = useMemo(
         () => buildSections(topLevelBlocks),
@@ -267,7 +291,7 @@ export default function DocumentView() {
 
                 <VerificationProgress
                     blocks={blocks}
-                    annotationsByBlock={annotationsByBlock}
+                    annotationsByBlock={effectiveAnnotations}
                 />
 
                 <BotSummary />
@@ -290,16 +314,40 @@ export default function DocumentView() {
                         const children = childrenOf(block.id);
                         const hasChildren = children.length > 0;
                         const blockAnns =
-                            annotationsByBlock.get(block.block_id) ?? [];
+                            effectiveAnnotations.get(block.block_id) ?? [];
+
+                        // Multi-select: show a single range checkbox on the
+                        // first selected block, hide checkboxes on the rest.
+                        const isMulti = activeBlockIds.length > 1;
+                        const firstSel = isMulti ? activeBlockIds[0] : null;
+                        const lastSel = isMulti ? activeBlockIds[activeBlockIds.length - 1] : null;
+                        const isFirstInRange = block.block_id === firstSel;
+
+                        const renderCheck = (bid: string, anns: Annotation[]) => {
+                            if (isMulti && bid === firstSel) {
+                                return (
+                                    <CheckToggle
+                                        blockId={bid}
+                                        endBlockId={lastSel!}
+                                        docId={id!}
+                                        annotations={anns}
+                                    />
+                                );
+                            }
+                            if (isMulti && activeBlockIds.includes(bid)) return null;
+                            return (
+                                <CheckToggle
+                                    blockId={bid}
+                                    docId={id!}
+                                    annotations={anns}
+                                />
+                            );
+                        };
+
                         return (
                             <div key={block.id} style={{ position: "relative" }}>
-                                {block.block_type !== "section_heading" && (
-                                    <CheckToggle
-                                        blockId={block.block_id}
-                                        docId={id!}
-                                        annotations={blockAnns}
-                                    />
-                                )}
+                                {(isFirstInRange || block.block_type !== "section_heading") &&
+                                    renderCheck(block.block_id, blockAnns)}
                                 <BlockRenderer
                                     block={block}
                                     isContainer={hasChildren}
@@ -308,9 +356,10 @@ export default function DocumentView() {
                                 />
                                 {children.map((child) => {
                                     const childAnns =
-                                        annotationsByBlock.get(
+                                        effectiveAnnotations.get(
                                             child.block_id
                                         ) ?? [];
+                                    const childIsFirst = child.block_id === firstSel;
                                     return (
                                         <div
                                             key={child.id}
@@ -321,11 +370,8 @@ export default function DocumentView() {
                                                     : "0",
                                             }}
                                         >
-                                            <CheckToggle
-                                                blockId={child.block_id}
-                                                docId={id!}
-                                                annotations={childAnns}
-                                            />
+                                            {(childIsFirst || !isMulti || !activeBlockIds.includes(child.block_id)) &&
+                                                renderCheck(child.block_id, childAnns)}
                                             <BlockRenderer
                                                 block={child}
                                                 annotations={childAnns}

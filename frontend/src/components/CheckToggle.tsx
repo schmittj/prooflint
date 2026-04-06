@@ -7,20 +7,29 @@ interface CheckToggleProps {
     blockId: string;
     docId: string;
     annotations: Annotation[];
+    /** When set, the toggle creates/deletes a range annotation spanning start→end */
+    endBlockId?: string;
 }
 
 export default function CheckToggle({
     blockId,
     docId,
     annotations,
+    endBlockId,
 }: CheckToggleProps) {
     const { createAnnotation, deleteAnnotation } = useAnnotationStore();
     const { setActiveBlock } = useUIStore();
     const [busy, setBusy] = useState(false);
 
-    const checkAnnotation = annotations.find(
-        (a) => a.category === "check" && !a.resolved
-    );
+    const isRange = !!endBlockId && endBlockId !== blockId;
+
+    const checkAnnotation = annotations.find((a) => {
+        if (a.category !== "check" || a.resolved) return false;
+        // Range mode: match only the exact span
+        if (isRange) return a.start_block === blockId && a.end_block === endBlockId;
+        // Single-block mode: any covering check counts (including range annotations)
+        return true;
+    });
     const isChecked = !!checkAnnotation;
 
     const toggle = async (e: React.MouseEvent) => {
@@ -34,6 +43,7 @@ export default function CheckToggle({
             } else {
                 await createAnnotation(docId, {
                     start_block: blockId,
+                    ...(isRange ? { end_block: endBlockId } : {}),
                     category: "check",
                     tags: ["manual_review"],
                     body: "Checked",
