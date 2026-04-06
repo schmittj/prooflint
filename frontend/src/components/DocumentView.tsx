@@ -14,6 +14,14 @@ import BotSummary from "./BotSummary";
 import type { Annotation, Block } from "../types/models";
 import "./DocumentView.css";
 
+/** Truncated content preview for sidebar items */
+function blockPreview(b: Block): string {
+    const raw = (b.content_original || "").replace(/\n+/g, " ").trim();
+    if (!raw) return b.block_type;
+    const max = 50;
+    return raw.length > max ? raw.slice(0, max) + "\u2026" : raw;
+}
+
 /** Group blocks under section headings for the sidebar */
 interface SidebarSection {
     heading: Block | null;
@@ -199,10 +207,8 @@ export default function DocumentView() {
                                     onClick={() => scrollToBlock(b.block_id, true)}
                                 >
                                     <span className="sidebar-item-label">
-                                        {b.block_type === "paragraph"
-                                            ? "para"
-                                            : b.block_type}
-                                        {b.label ? ` (${b.label})` : ""}
+                                        {b.label ? `${b.label}: ` : ""}
+                                        {blockPreview(b)}
                                     </span>
                                     {(annotationsByBlock.get(b.block_id)?.filter(
                                         (a) => !a.resolved && a.category === "issue"
@@ -222,18 +228,18 @@ export default function DocumentView() {
             </aside>
 
             {/* ── Center: document reader ── */}
+            {/* Sidebar toggle – grid-overlaid so it stays vertically centred on screen */}
+            <button className="sidebar-toggle" onClick={toggleSidebar}>
+                {sidebarCollapsed ? "\u25b6" : "\u25c0"}
+            </button>
+
             <section className="doc-reader" ref={readerRef} onClick={(e) => {
                 // Deselect when clicking whitespace — but not on blocks (they stopPropagation)
-                // or interactive elements like the sidebar toggle
                 const el = e.target as HTMLElement;
                 if (!el.closest("button, [data-block-id], .check-toggle")) {
                     setActiveBlock(null);
                 }
             }}>
-                <button className="sidebar-toggle" onClick={toggleSidebar}>
-                    {sidebarCollapsed ? "\u25b6" : "\u25c0"}
-                </button>
-
                 <h2 style={{ marginTop: 0 }}>
                     {currentDocument.title || "Untitled document"}
                 </h2>
