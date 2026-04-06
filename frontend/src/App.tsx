@@ -1,10 +1,14 @@
 import { Link, Outlet } from "react-router-dom";
+import { getLocalAdminHeaders } from "./api/localAdmin";
 
 function StopButton() {
     const handleStop = async () => {
         if (!window.confirm("Stop ProofLint server?")) return;
         try {
-            await fetch("/api/v1/shutdown/", { method: "POST" });
+            await fetch("/api/v1/shutdown/", {
+                method: "POST",
+                headers: await getLocalAdminHeaders(),
+            });
         } catch {
             // Connection will drop as the server shuts down
         }

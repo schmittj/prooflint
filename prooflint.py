@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import platform
+import secrets
 import shutil
 import signal
 import socket
@@ -381,8 +382,9 @@ def run_migrations(conda):
 
 
 def ensure_env_file():
-    """Copy .env.example → .env if missing."""
+    """Copy .env.example → .env if missing, then fill internal secrets."""
     if ENV_FILE.exists():
+        _ensure_internal_env_keys()
         return
     if ENV_EXAMPLE.exists():
         shutil.copy2(ENV_EXAMPLE, ENV_FILE)
@@ -393,9 +395,63 @@ def ensure_env_file():
             "# Set your API key here, or use the Settings page in the browser.\n"
             "\n"
             "OPENAI_API_KEY=\n"
+            "DJANGO_SECRET_KEY=change-me-in-production\n"
+            "PROOFLINT_ADMIN_TOKEN=\n"
             "DEBUG=true\n"
         )
         info("Created .env file")
+    _ensure_internal_env_keys()
+
+
+def _replace_or_append_env(lines, key, value):
+    updated = []
+    replaced = False
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            current_key, _, _ = stripped.partition("=")
+            if current_key.strip() == key:
+                updated.append("{}={}".format(key, value))
+                replaced = True
+                continue
+        updated.append(raw)
+    if not replaced:
+        if updated and updated[-1] != "":
+            updated.append("")
+        updated.append("{}={}".format(key, value))
+    return updated
+
+
+def _ensure_internal_env_keys():
+    if not ENV_FILE.exists():
+        return
+
+    lines = ENV_FILE.read_text().splitlines()
+    current = {}
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key, _, value = stripped.partition("=")
+            current[key.strip()] = value.strip()
+
+    replacements = {}
+    if current.get("DJANGO_SECRET_KEY", "") in {
+        "",
+        "change-me-in-production",
+        "django-insecure-change-me-in-production",
+    }:
+        replacements["DJANGO_SECRET_KEY"] = secrets.token_urlsafe(50)
+    if not current.get("PROOFLINT_ADMIN_TOKEN", ""):
+        replacements["PROOFLINT_ADMIN_TOKEN"] = secrets.token_urlsafe(32)
+
+    if not replacements:
+        return
+
+    for key, value in replacements.items():
+        lines = _replace_or_append_env(lines, key, value)
+        os.environ[key] = value
+
+    ENV_FILE.write_text("\n".join(lines) + "\n")
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,10 @@ On the first run the launcher will:
 4. Set up the local database.
 5. Start the application and open your browser.
 
+During setup the launcher also creates a local `.env` (if needed), replaces the
+placeholder Django secret with a real one, and generates an internal admin token
+used by the localhost-only Settings and Stop actions.
+
 On subsequent runs it skips straight to step 5 — startup is near-instant.
 
 ### Configuring API keys
@@ -94,6 +98,22 @@ python manage.py runserver
 cd frontend
 npm install
 npm run dev
+```
+
+### Git safety check
+
+This repo ships with a local pre-push hook that blocks likely secrets and
+local-only artifacts such as `.env` variants or SQLite databases. Enable it once
+per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+You can also run the scanner manually:
+
+```bash
+python3 scripts/check_secrets.py --all-history
 ```
 
 ### Docker

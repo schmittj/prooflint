@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import axios from "axios";
+import { getLocalAdminHeaders } from "../api/localAdmin";
 
 function withoutKey(record: Record<string, string | boolean>, key: string) {
     const rest = { ...record };
@@ -81,7 +82,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             saved: { ...s.saved, [key]: false },
         }));
         try {
-            await axios.post("/api/v1/settings/", { [key]: value });
+            const headers = await getLocalAdminHeaders();
+            await axios.post("/api/v1/settings/", { [key]: value }, { headers });
             const res = await axios.get("/api/v1/settings/");
             set((s) => ({
                 saving: { ...s.saving, [key]: false },

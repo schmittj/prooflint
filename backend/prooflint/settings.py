@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 import dj_database_url
@@ -8,9 +9,17 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get(
+def _env_or_random(name, *, disallowed=(), nbytes=32):
+    value = os.environ.get(name, "").strip()
+    if value in disallowed:
+        value = ""
+    return value or secrets.token_urlsafe(nbytes)
+
+
+SECRET_KEY = _env_or_random(
     "DJANGO_SECRET_KEY",
-    "django-insecure-change-me-in-production",
+    disallowed={"", "change-me-in-production", "django-insecure-change-me-in-production"},
+    nbytes=50,
 )
 
 DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
@@ -109,3 +118,4 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.4-mini")
 DEFAULT_REASONING_EFFORT = os.environ.get("DEFAULT_REASONING_EFFORT", "low")
+PROOFLINT_ADMIN_TOKEN = _env_or_random("PROOFLINT_ADMIN_TOKEN", nbytes=32)

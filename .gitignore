@@ -20,10 +20,13 @@ db.sqlite3
 # Node
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/

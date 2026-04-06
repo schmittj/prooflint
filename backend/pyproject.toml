@@ -26,6 +26,10 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["prooflint*", "documents*", "annotations*", "agents*"]
 
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "prooflint.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"

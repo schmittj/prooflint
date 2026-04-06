@@ -6,8 +6,10 @@ but never sees old ones in plain text).
 """
 
 import os
+import secrets
 import signal
 from pathlib import Path
+from urllib.parse import urlparse
 
 from django.conf import settings
 from rest_framework import status
@@ -28,11 +30,46 @@ ALLOWED_KEYS = {
 
 # Keys whose values are masked on read.
 SECRET_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"}
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def _is_localhost(request):
     remote = request.META.get("REMOTE_ADDR", "")
     return remote in ("127.0.0.1", "::1")
+
+
+def _is_local_origin(request):
+    for meta_key in ("HTTP_ORIGIN", "HTTP_REFERER"):
+        value = request.META.get(meta_key, "").strip()
+        if not value:
+            continue
+        if urlparse(value).hostname not in LOCAL_HOSTS:
+            return False
+    return True
+
+
+def _admin_token_valid(request):
+    expected = getattr(settings, "PROOFLINT_ADMIN_TOKEN", "")
+    provided = request.headers.get("X-ProofLint-Admin-Token", "")
+    return bool(expected) and secrets.compare_digest(provided, expected)
+
+
+def _reject_non_local():
+    return Response(
+        {"error": "This endpoint is only accessible from a local ProofLint session."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _require_local_write_access(request):
+    if not _is_localhost(request) or not _is_local_origin(request):
+        return _reject_non_local()
+    if not _admin_token_valid(request):
+        return Response(
+            {"error": "Missing or invalid local admin token."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 def _mask(value):
@@ -75,11 +112,8 @@ class SettingsView(APIView):
     authentication_classes = []
 
     def get(self, request):
-        if not _is_localhost(request):
-            return Response(
-                {"error": "Settings are only accessible from localhost."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        if not _is_localhost(request) or not _is_local_origin(request):
+            return _reject_non_local()
 
         result = {}
         for _, key, value in _read_env():
@@ -103,11 +137,9 @@ class SettingsView(APIView):
         })
 
     def post(self, request):
-        if not _is_localhost(request):
-            return Response(
-                {"error": "Settings are only accessible from localhost."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        rejection = _require_local_write_access(request)
+        if rejection:
+            return rejection
 
         data = request.data
         if not isinstance(data, dict):
@@ -186,6 +218,19 @@ class SettingsView(APIView):
         })
 
 
+class LocalSessionView(APIView):
+    """GET /api/v1/local-session/ — bootstrap token for local write actions."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        if not _is_localhost(request) or not _is_local_origin(request):
+            return _reject_non_local()
+
+        return Response({"admin_token": settings.PROOFLINT_ADMIN_TOKEN})
+
+
 class HealthView(APIView):
     """GET /api/v1/health/ — simple liveness check."""
 
@@ -207,11 +252,9 @@ class ShutdownView(APIView):
     authentication_classes = []
 
     def post(self, request):
-        if not _is_localhost(request):
-            return Response(
-                {"error": "Shutdown is only accessible from localhost."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        rejection = _require_local_write_access(request)
+        if rejection:
+            return rejection
 
         # Send SIGTERM to the parent (the launcher script)
         ppid = os.getppid()
