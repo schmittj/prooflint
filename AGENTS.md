@@ -12,6 +12,7 @@ python3 prooflint.py --dev
 # Option B — manual setup (if you manage your own Python/Node)
 cd backend  && python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+# Pandoc must also be installed on PATH when you skip the launcher.
 python manage.py migrate
 python manage.py runserver          # terminal 1
 

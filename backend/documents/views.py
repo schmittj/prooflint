@@ -9,6 +9,7 @@ from agents.models import AgentRun
 from agents.runner import launch_bot_run
 
 from .ingestion import ingest_document
+from .ingestion.pandoc import PandocResolutionError
 from .models import Block, Document
 from .serializers import (
     BlockSerializer,
@@ -46,6 +47,16 @@ class DocumentViewSet(viewsets.ModelViewSet):
         try:
             blocks = ingest_document(doc)
             logger.info("Ingested document %s: %d blocks", doc.id, len(blocks))
+        except PandocResolutionError as exc:
+            logger.exception("Ingestion failed for document %s", doc.id)
+            doc.delete()
+            return Response(
+                {
+                    "detail": str(exc),
+                    "error": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as exc:
             logger.exception("Ingestion failed for document %s", doc.id)
             doc.delete()
@@ -97,6 +108,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
             return Response(
                 {"status": "ok", "block_count": len(blocks)},
                 status=status.HTTP_200_OK,
+            )
+        except PandocResolutionError as exc:
+            logger.exception("Re-ingestion failed for document %s", doc.id)
+            return Response(
+                {"status": "error", "detail": str(exc), "error": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except Exception as e:
             logger.exception("Re-ingestion failed for document %s", doc.id)

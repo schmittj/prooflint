@@ -7,9 +7,14 @@ function describeError(error: unknown): string {
         response?: { data?: { detail?: string; error?: string } };
         message?: string;
     };
+    const detail = maybeAxios.response?.data?.detail;
+    const backendError = maybeAxios.response?.data?.error;
+    if (detail && backendError && detail !== backendError) {
+        return `${detail} (${backendError})`;
+    }
     return (
-        maybeAxios.response?.data?.detail ||
-        maybeAxios.response?.data?.error ||
+        detail ||
+        backendError ||
         maybeAxios.message ||
         String(error)
     );

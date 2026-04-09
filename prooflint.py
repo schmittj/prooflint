@@ -556,8 +556,9 @@ def start_servers(conda, dev_mode=False):
     """Start Django and Vite, then wait."""
     python = env_bin(conda, "python")
     node = env_bin(conda, "node")
-    if not python or not node:
-        error("python or node not found in conda environment.")
+    pandoc = env_bin(conda, "pandoc")
+    if not python or not node or not pandoc:
+        error("python, node, or pandoc not found in conda environment.")
         sys.exit(1)
 
     vite_js = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
@@ -578,6 +579,7 @@ def start_servers(conda, dev_mode=False):
         env["PATH"] = extra + ";" + env.get("PATH", "")
     else:
         env["PATH"] = str(prefix / "bin") + ":" + env.get("PATH", "")
+    env["PROOFLINT_PANDOC_PATH"] = pandoc
 
     # Tell the Vite proxy where the backend lives
     env["API_URL"] = "http://localhost:{}".format(backend_port)

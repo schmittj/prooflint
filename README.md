@@ -91,6 +91,7 @@ and conventions — also useful for AI coding tools (Claude Code, Codex, etc.).
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+# Pandoc is still required here; install it separately or use the launcher.
 python manage.py migrate
 python manage.py runserver
 

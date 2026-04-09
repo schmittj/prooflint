@@ -5,6 +5,7 @@ import re
 
 import panflute as pf
 
+from .pandoc import resolve_pandoc_path
 from .sentence_splitter import split_sentences
 
 
@@ -90,7 +91,13 @@ def process_ast(
         List of block dicts ready for Block model creation.
     """
     fmt = "markdown+tex_math_single_backslash" if source_format == "markdown" else "latex"
-    elements = pf.convert_text(expanded_source, input_format=fmt, output_format="panflute")
+    pandoc_path = resolve_pandoc_path()
+    elements = pf.convert_text(
+        expanded_source,
+        input_format=fmt,
+        output_format="panflute",
+        pandoc_path=pandoc_path,
+    )
 
     # Extend theorem-like detection with custom declarations
     custom_envs = {}
@@ -243,6 +250,7 @@ def process_ast(
             input_format="json",
             output_format="markdown",
             extra_args=["--wrap=none"],
+            pandoc_path=pandoc_path,
         ).strip()
 
     def process_list(elem, parent_id: str = "") -> dict:
@@ -275,6 +283,7 @@ def process_ast(
             input_format="json",
             output_format="markdown",
             extra_args=["--wrap=none"],
+            pandoc_path=pandoc_path,
         ).strip()
         sentences = split_sentences(text)
         for s in sentences:
@@ -395,7 +404,10 @@ def process_ast(
                 block_id = next_id(env_type)
                 # Re-parse the body through pandoc to get structured content
                 body_elements = pf.convert_text(
-                    body, input_format="latex", output_format="panflute"
+                    body,
+                    input_format="latex",
+                    output_format="panflute",
+                    pandoc_path=pandoc_path,
                 )
                 child_blocks = []
                 for child_elem in body_elements:
