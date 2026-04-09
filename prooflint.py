@@ -210,6 +210,31 @@ def env_bin(conda, name):
     return None
 
 
+def env_vars(conda):
+    """Return environment variables for commands that should run inside the conda env."""
+    prefix = env_prefix(conda)
+    if prefix is None:
+        raise RuntimeError("Conda environment prefix is unavailable.")
+
+    env = os.environ.copy()
+    if _is_windows():
+        extra = ";".join([
+            str(prefix), str(prefix / "Scripts"), str(prefix / "Library" / "bin"),
+        ])
+        env["PATH"] = extra + ";" + env.get("PATH", "")
+    else:
+        env["PATH"] = str(prefix / "bin") + ":" + env.get("PATH", "")
+
+    env["CONDA_PREFIX"] = str(prefix)
+    env["CONDA_DEFAULT_ENV"] = CONDA_ENV
+
+    pandoc = env_bin(conda, "pandoc")
+    if pandoc:
+        env["PROOFLINT_PANDOC_PATH"] = pandoc
+
+    return env
+
+
 # ---------------------------------------------------------------------------
 # Miniforge installation
 # ---------------------------------------------------------------------------
@@ -315,10 +340,12 @@ def install_backend(conda):
         error("pip not found in conda environment.")
         sys.exit(1)
 
+    env = env_vars(conda)
     r = subprocess.run(
         [pip, "install", "-e", ".[dev]"],
         capture_output=True, text=True,
         cwd=str(BACKEND_DIR),
+        env=env,
     )
     if r.returncode != 0:
         error("Backend installation failed.")
@@ -340,10 +367,12 @@ def install_frontend(conda):
         error("npm not found in conda environment.")
         sys.exit(1)
 
+    env = env_vars(conda)
     r = subprocess.run(
         [npm, "install"],
         capture_output=True, text=True,
         cwd=str(FRONTEND_DIR),
+        env=env,
     )
     if r.returncode != 0:
         error("Frontend installation failed.")
@@ -365,10 +394,12 @@ def run_migrations(conda):
         error("python not found in conda environment.")
         sys.exit(1)
 
+    env = env_vars(conda)
     r = subprocess.run(
         [python, "manage.py", "migrate"],
         capture_output=True, text=True,
         cwd=str(BACKEND_DIR),
+        env=env,
     )
     if r.returncode != 0:
         error("Database migration failed.")
@@ -569,17 +600,7 @@ def start_servers(conda, dev_mode=False):
     backend_port = _find_free_port(8000)
     frontend_port = _find_free_port(5173)
 
-    # Build PATH so subprocesses can find conda-env binaries
-    prefix = env_prefix(conda)
-    env = os.environ.copy()
-    if _is_windows():
-        extra = ";".join([
-            str(prefix), str(prefix / "Scripts"), str(prefix / "Library" / "bin"),
-        ])
-        env["PATH"] = extra + ";" + env.get("PATH", "")
-    else:
-        env["PATH"] = str(prefix / "bin") + ":" + env.get("PATH", "")
-    env["PROOFLINT_PANDOC_PATH"] = pandoc
+    env = env_vars(conda)
 
     # Tell the Vite proxy where the backend lives
     env["API_URL"] = "http://localhost:{}".format(backend_port)
