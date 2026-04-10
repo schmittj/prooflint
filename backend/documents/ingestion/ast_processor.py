@@ -86,6 +86,10 @@ TYPE_PREFIX = {
 }
 
 _LOCAL_REF_LINK_RE = re.compile(r"\[([^\]]+)\]\(#([^)]+)\)")
+_OUTER_DISPLAY_ENV_RE = re.compile(
+    r"^\s*\\begin\{(equation\*?|displaymath)\}\s*(.*?)\s*\\end\{\1\}\s*$",
+    re.DOTALL,
+)
 
 
 def _map_theorem_display_name(display_name: str) -> str:
@@ -145,6 +149,16 @@ def _resolve_label_references(blocks: list[dict]) -> None:
         update_block_text(block)
         for child in block.get("children", []):
             update_block_text(child)
+
+
+def _normalize_display_math_text(text: str) -> str:
+    """Remove redundant outer display environments from Pandoc math text."""
+    text = text.strip()
+    while True:
+        match = _OUTER_DISPLAY_ENV_RE.match(text)
+        if not match:
+            return text
+        text = match.group(2).strip()
 
 
 def process_ast(
@@ -335,11 +349,11 @@ def process_ast(
     def process_math_block(elem) -> dict:
         """Process a display math block."""
         if isinstance(elem, pf.Math):
-            math_text = elem.text.strip()
+            math_text = _normalize_display_math_text(elem.text)
         elif isinstance(elem, pf.Para) and len(elem.content) == 1 and isinstance(elem.content[0], pf.Math):
-            math_text = elem.content[0].text.strip()
+            math_text = _normalize_display_math_text(elem.content[0].text)
         else:
-            math_text = stringify_with_math(elem).strip()
+            math_text = _normalize_display_math_text(stringify_with_math(elem))
 
         if "\\xymatrix" in math_text:
             block_id = next_id("raw_latex")

@@ -6,7 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from documents.ingestion.macro_expander import expand_macros
-from documents.ingestion.ast_processor import process_ast
+from documents.ingestion.ast_processor import (
+    _normalize_display_math_text,
+    process_ast,
+)
 from documents.ingestion.pandoc import PandocResolutionError, resolve_pandoc_path
 from documents.ingestion.preamble import extract_macros
 
@@ -174,6 +177,25 @@ def test_process_ast_normalizes_equation_environments_to_display_math():
     assert "\\end{equation}" not in equations[0]["content_original"]
     assert equations[1]["content_original"].startswith("$$\\zeta")
     assert "\\end{equation" not in equations[1]["content_original"]
+
+
+def test_normalize_display_math_text_strips_outer_equation_envs():
+    assert _normalize_display_math_text(
+        r"""
+        \begin{equation}
+        \begin{split}
+        a &= b
+        \end{split}
+        \end{equation}
+        """
+    ) == "\\begin{split}\n        a &= b\n        \\end{split}"
+    assert _normalize_display_math_text(
+        r"""
+        \begin{equation*}
+        \zeta\colon X \rightarrow Y
+        \end{equation*}
+        """
+    ) == "\\zeta\\colon X \\rightarrow Y"
 
 
 def test_document_create_returns_actionable_pandoc_error(client, db):
