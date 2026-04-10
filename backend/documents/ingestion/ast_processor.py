@@ -58,6 +58,14 @@ THEOREM_LIKE = {
 }
 
 PROOF_CLASSES = {"proof"}
+THEOREM_COUNTER_TYPES = {
+    "theorem",
+    "lemma",
+    "proposition",
+    "corollary",
+    "definition",
+    "remark",
+}
 
 # Short prefixes for block IDs
 TYPE_PREFIX = {
@@ -77,6 +85,8 @@ TYPE_PREFIX = {
     "blockquote": "bq",
 }
 
+_LOCAL_REF_LINK_RE = re.compile(r"\[([^\]]+)\]\(#([^)]+)\)")
+
 
 def _map_theorem_display_name(display_name: str) -> str:
     """Map a LaTeX theorem display name to ProofLint's block taxonomy."""
@@ -93,6 +103,48 @@ def _map_theorem_display_name(display_name: str) -> str:
     if any(word in {"remark", "note", "aside", "example"} for word in words):
         return "remark"
     return "theorem"
+
+
+def _resolve_label_references(blocks: list[dict]) -> None:
+    """Rewrite label-ref links to show document numbers instead of labels."""
+    label_numbers: dict[str, str] = {}
+    theorem_counter = 0
+    section_counter = 0
+
+    for block in blocks:
+        block_type = block["block_type"]
+        label = block.get("label", "")
+        if block_type == "section_heading":
+            section_counter += 1
+            if label:
+                label_numbers[label] = str(section_counter)
+        elif block_type in THEOREM_COUNTER_TYPES:
+            theorem_counter += 1
+            if label:
+                label_numbers[label] = str(theorem_counter)
+
+    def replace_refs(text: str) -> str:
+        def repl(match: re.Match) -> str:
+            target = match.group(2)
+            if target not in label_numbers:
+                return match.group(0)
+            return f"[{label_numbers[target]}](#{target})"
+
+        return _LOCAL_REF_LINK_RE.sub(repl, text)
+
+    def update_block_text(block: dict) -> None:
+        for key in ("content_original", "content_expanded"):
+            block[key] = replace_refs(block[key])
+        if block.get("sentences"):
+            sentences = split_sentences(block["content_original"])
+            for sentence in sentences:
+                sentence["id"] = f"{block['block_id']}.{sentence.pop('id_suffix')}"
+            block["sentences"] = sentences
+
+    for block in blocks:
+        update_block_text(block)
+        for child in block.get("children", []):
+            update_block_text(child)
 
 
 def process_ast(
@@ -547,5 +599,7 @@ def process_ast(
             for child in block["children"]:
                 child["order"] = order
                 order += 1
+
+    _resolve_label_references(blocks)
 
     return blocks

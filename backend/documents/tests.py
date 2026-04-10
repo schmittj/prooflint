@@ -112,7 +112,7 @@ def test_process_ast_preserves_latex_labels_refs_citations_and_macros():
 
     assert theorem["label"] == "LiftingSections"
     assert "{\\mathscr{A}}" in theorem["content_original"]
-    assert "[LiftingSections](#LiftingSections)" in paragraph["content_original"]
+    assert "[1](#LiftingSections)" in paragraph["content_original"]
     assert "stacks-project" in paragraph["content_original"]
     assert "[Tag 025X](http://stacks.math.columbia.edu/tag/025X)" in paragraph[
         "content_original"
@@ -140,6 +140,40 @@ def test_process_ast_keeps_xymatrix_as_raw_latex_fallback():
 
     assert blocks[0]["block_type"] == "raw_latex"
     assert "\\xymatrix" in blocks[0]["content_original"]
+
+
+def test_process_ast_normalizes_equation_environments_to_display_math():
+    try:
+        resolve_pandoc_path()
+    except PandocResolutionError as exc:
+        pytest.skip(str(exc))
+
+    source = r"""
+    \begin{equation}
+    \begin{split}
+    \alpha\colon C_0 & \rightarrow J_0 \\
+    q & \mapsto [q-e_K] \\
+    \end{split}
+    \end{equation}
+
+    \begin{equation*}
+    \zeta\colon \operatorname{Pic}^0_{\mathscr{C}/\mathscr{S}} \rightarrow \mathscr{A}
+    \end{equation*}
+    """
+
+    blocks = process_ast(
+        source=source,
+        source_format="latex",
+        expanded_source=source,
+        theorem_env_table={},
+    )
+
+    equations = [b for b in blocks if b["block_type"] == "equation"]
+    assert len(equations) == 2
+    assert equations[0]["content_original"].startswith("$$\\begin{split}")
+    assert "\\end{equation}" not in equations[0]["content_original"]
+    assert equations[1]["content_original"].startswith("$$\\zeta")
+    assert "\\end{equation" not in equations[1]["content_original"]
 
 
 def test_document_create_returns_actionable_pandoc_error(client, db):
