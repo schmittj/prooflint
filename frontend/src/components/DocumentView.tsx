@@ -429,35 +429,36 @@ export default function DocumentView() {
                                     orderedBlockIds={orderedBlockIds}
                                     colorRunPos={colorRunInfo.get(block.block_id)}
                                     inMultiSelect={isMulti}
-                                />
-                                {children.map((child) => {
-                                    const childAnns =
-                                        effectiveAnnotations.get(
-                                            child.block_id
-                                        ) ?? [];
-                                    const childIsFirst = child.block_id === firstSel;
-                                    return (
-                                        <div
-                                            key={child.id}
-                                            style={{
-                                                position: "relative",
-                                                marginLeft: hasChildren
-                                                    ? "16px"
-                                                    : "0",
-                                            }}
-                                        >
-                                            {(childIsFirst || !isMulti || !activeBlockIds.includes(child.block_id)) &&
-                                                renderCheck(child.block_id, childAnns)}
-                                            <BlockRenderer
-                                                block={child}
-                                                annotations={childAnns}
-                                                orderedBlockIds={orderedBlockIds}
-                                                colorRunPos={colorRunInfo.get(child.block_id)}
-                                                inMultiSelect={isMulti}
-                                            />
-                                        </div>
-                                    );
-                                })}
+                                >
+                                    {children.map((child) => {
+                                        const childAnns =
+                                            effectiveAnnotations.get(
+                                                child.block_id
+                                            ) ?? [];
+                                        const childIsFirst = child.block_id === firstSel;
+                                        return (
+                                            <div
+                                                key={child.id}
+                                                style={{
+                                                    position: "relative",
+                                                    marginTop: hasChildren
+                                                        ? "6px"
+                                                        : "0",
+                                                }}
+                                            >
+                                                {(childIsFirst || !isMulti || !activeBlockIds.includes(child.block_id)) &&
+                                                    renderCheck(child.block_id, childAnns)}
+                                                <BlockRenderer
+                                                    block={child}
+                                                    annotations={childAnns}
+                                                    orderedBlockIds={orderedBlockIds}
+                                                    colorRunPos={colorRunInfo.get(child.block_id)}
+                                                    inMultiSelect={isMulti}
+                                                />
+                                            </div>
+                                        );
+                                    })}
+                                </BlockRenderer>
                             </div>
                         );
                     })

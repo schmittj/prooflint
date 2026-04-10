@@ -5,8 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
+from documents.ingestion.macro_expander import expand_macros
 from documents.ingestion.ast_processor import process_ast
 from documents.ingestion.pandoc import PandocResolutionError, resolve_pandoc_path
+from documents.ingestion.preamble import extract_macros
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +58,88 @@ def test_process_ast_passes_resolved_pandoc_path():
         )
 
     assert mocked_convert.call_args.kwargs["pandoc_path"] == "/tmp/pandoc"
+
+
+def test_extract_macros_handles_nested_braces():
+    preamble = r"""
+    \newcommand{\bb}[1]{{\mathbb{#1}}}
+    \newcommand{\cl}[1]{{\mathscr{#1}}}
+    \newcommand{\ca}[1]{{\mathcal{#1}}}
+    \def\defeq{\stackrel{\text{\tiny def}}{=}}
+    """
+
+    macros = extract_macros(preamble)
+
+    assert macros["\\bb"] == {"expansion": "{\\mathbb{#1}}", "arity": 1}
+    assert macros["\\cl"] == {"expansion": "{\\mathscr{#1}}", "arity": 1}
+    assert macros["\\ca"] == {"expansion": "{\\mathcal{#1}}", "arity": 1}
+    assert macros["\\defeq"] == {
+        "expansion": "\\stackrel{\\text{\\tiny def}}{=}",
+        "arity": 0,
+    }
+
+
+def test_process_ast_preserves_latex_labels_refs_citations_and_macros():
+    try:
+        resolve_pandoc_path()
+    except PandocResolutionError as exc:
+        pytest.skip(str(exc))
+
+    source = r"""
+    \begin{theorem}\label{LiftingSections}
+    Let $\cl{A}$ be an object.
+    \end{theorem}
+
+    See theorem \ref{LiftingSections} and
+    \cite[\href{http://stacks.math.columbia.edu/tag/025X}{Tag 025X}]{stacks-project}.
+    """
+    macros = {"\\cl": {"expansion": "{\\mathscr{#1}}", "arity": 1}}
+    expanded_source, _ = expand_macros(source, macros)
+
+    blocks = process_ast(
+        source=source,
+        source_format="latex",
+        expanded_source=expanded_source,
+        theorem_env_table={"theorem": {"display_name": "Theorem"}},
+    )
+
+    theorem = next(b for b in blocks if b["block_type"] == "theorem")
+    paragraph = next(
+        b
+        for b in blocks
+        if b["block_type"] == "paragraph" and b["block_id"] != "thm1.p1"
+    )
+
+    assert theorem["label"] == "LiftingSections"
+    assert "{\\mathscr{A}}" in theorem["content_original"]
+    assert "[LiftingSections](#LiftingSections)" in paragraph["content_original"]
+    assert "stacks-project" in paragraph["content_original"]
+    assert "[Tag 025X](http://stacks.math.columbia.edu/tag/025X)" in paragraph[
+        "content_original"
+    ]
+
+
+def test_process_ast_keeps_xymatrix_as_raw_latex_fallback():
+    try:
+        resolve_pandoc_path()
+    except PandocResolutionError as exc:
+        pytest.skip(str(exc))
+
+    source = r"""
+    \begin{displaymath}
+    \xymatrix{A \ar[r] & B}
+    \end{displaymath}
+    """
+
+    blocks = process_ast(
+        source=source,
+        source_format="latex",
+        expanded_source=source,
+        theorem_env_table={},
+    )
+
+    assert blocks[0]["block_type"] == "raw_latex"
+    assert "\\xymatrix" in blocks[0]["content_original"]
 
 
 def test_document_create_returns_actionable_pandoc_error(client, db):

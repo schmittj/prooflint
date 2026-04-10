@@ -23,6 +23,7 @@ export interface Block {
     id: string;
     block_id: string;
     block_type: string;
+    display_label?: string;
     content_original: string;
     content_expanded: string;
     order: number;

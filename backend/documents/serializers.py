@@ -4,12 +4,15 @@ from .models import Block, Document
 
 
 class BlockSerializer(serializers.ModelSerializer):
+    display_label = serializers.SerializerMethodField()
+
     class Meta:
         model = Block
         fields = [
             "id",
             "block_id",
             "block_type",
+            "display_label",
             "content_original",
             "content_expanded",
             "order",
@@ -17,6 +20,27 @@ class BlockSerializer(serializers.ModelSerializer):
             "sentences",
             "label",
         ]
+
+    def get_display_label(self, obj):
+        labels = {
+            "theorem": "Theorem",
+            "lemma": "Lemma",
+            "proposition": "Proposition",
+            "corollary": "Corollary",
+            "definition": "Definition",
+            "remark": "Remark",
+        }
+        if obj.block_type == "proof":
+            return "Proof"
+        label = labels.get(obj.block_type)
+        if not label:
+            return ""
+        count = obj.document.blocks.filter(
+            parent__isnull=True,
+            block_type__in=labels,
+            order__lte=obj.order,
+        ).count()
+        return f"{label} {count}"
 
 
 class DocumentListSerializer(serializers.ModelSerializer):

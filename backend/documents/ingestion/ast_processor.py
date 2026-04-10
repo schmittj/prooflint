@@ -50,6 +50,11 @@ THEOREM_LIKE = {
     "definition": "definition",
     "remark": "remark",
     "example": "remark",
+    "claim": "theorem",
+    "conjecture": "theorem",
+    "condition": "definition",
+    "problem": "definition",
+    "aside": "remark",
 }
 
 PROOF_CLASSES = {"proof"}
@@ -71,6 +76,23 @@ TYPE_PREFIX = {
     "raw_latex": "raw",
     "blockquote": "bq",
 }
+
+
+def _map_theorem_display_name(display_name: str) -> str:
+    """Map a LaTeX theorem display name to ProofLint's block taxonomy."""
+    text = display_name.lower()
+    words = re.findall(r"[a-z]+", text)
+    if any(word.startswith("lem") for word in words):
+        return "lemma"
+    if any(word.startswith("prop") for word in words):
+        return "proposition"
+    if any(word.startswith("cor") for word in words):
+        return "corollary"
+    if any(word.startswith("def") or word == "condition" for word in words):
+        return "definition"
+    if any(word in {"remark", "note", "aside", "example"} for word in words):
+        return "remark"
+    return "theorem"
 
 
 def process_ast(
@@ -103,20 +125,10 @@ def process_ast(
     custom_envs = {}
     if theorem_env_table:
         for envname, info in theorem_env_table.items():
-            display = info.get("display_name", envname).lower()
-            # Map to the closest standard type, or default to "theorem"
-            if any(kw in display for kw in ("lemma", "lem")):
-                custom_envs[envname] = "lemma"
-            elif any(kw in display for kw in ("prop",)):
-                custom_envs[envname] = "proposition"
-            elif any(kw in display for kw in ("cor",)):
-                custom_envs[envname] = "corollary"
-            elif any(kw in display for kw in ("def",)):
-                custom_envs[envname] = "definition"
-            elif any(kw in display for kw in ("rem", "remark", "note")):
-                custom_envs[envname] = "remark"
-            else:
-                custom_envs[envname] = "theorem"
+            if envname in THEOREM_LIKE:
+                continue
+            display = info.get("display_name", envname)
+            custom_envs[envname] = _map_theorem_display_name(display)
 
     all_theorem_envs = {**THEOREM_LIKE, **custom_envs}
 
@@ -147,6 +159,25 @@ def process_ast(
                 parts.append(f"$${elem.text}$$")
         elif isinstance(elem, pf.RawInline):
             parts.append(elem.text)
+        elif isinstance(elem, pf.Code):
+            parts.append(f"`{elem.text}`")
+        elif isinstance(elem, pf.Cite):
+            parts.append(_stringify_cite(elem))
+        elif isinstance(elem, pf.Link):
+            inner = "".join(stringify_with_math(c) for c in elem.content)
+            if elem.url.startswith("#") and inner.startswith("[") and inner.endswith("]"):
+                inner = inner[1:-1]
+            parts.append(f"[{inner}]({elem.url})")
+        elif isinstance(elem, pf.Span):
+            # Pandoc represents body-local \label{...} as an empty span
+            # with a label attribute. It should anchor the parent block, not
+            # render as visible text.
+            if elem.identifier or elem.attributes.get("label"):
+                inner = "".join(stringify_with_math(c) for c in elem.content)
+                if not inner.strip():
+                    return ""
+            for child in elem.content:
+                parts.append(stringify_with_math(child))
         elif isinstance(elem, pf.Strong):
             inner = "".join(stringify_with_math(c) for c in elem.content)
             parts.append(f"**{inner}**")
@@ -164,8 +195,41 @@ def process_ast(
                 parts.append(f'"{inner}"')
         return "".join(parts)
 
+    def _stringify_inlines(inlines) -> str:
+        return "".join(stringify_with_math(c) for c in inlines).strip()
+
+    def _stringify_cite(elem: pf.Cite) -> str:
+        citations = []
+        for citation in elem.citations:
+            prefix = _stringify_inlines(citation.prefix)
+            suffix = _stringify_inlines(citation.suffix)
+            pieces = []
+            if prefix:
+                pieces.append(prefix)
+            pieces.append(citation.id)
+            if suffix:
+                pieces.append(suffix)
+            citations.append(", ".join(pieces))
+        return "[" + "; ".join(citations) + "]"
+
+    def _extract_div_label(elem: pf.Div) -> str:
+        """Find labels Pandoc stores either on the Div or a leading Span."""
+        if elem.identifier:
+            return elem.identifier
+        for child in elem.content:
+            if not isinstance(child, (pf.Para, pf.Plain)) or not child.content:
+                continue
+            first = child.content[0]
+            if isinstance(first, pf.Span):
+                label = first.identifier or first.attributes.get("label", "")
+                if label:
+                    return label
+            break
+        return ""
+
     def _make_para_block(text: str, parent_id: str = "") -> dict:
         """Create a paragraph block dict from text."""
+        text = text.strip()
         block_id = next_id("paragraph")
         if parent_id:
             block_id = f"{parent_id}.{block_id}"
@@ -218,13 +282,26 @@ def process_ast(
 
     def process_math_block(elem) -> dict:
         """Process a display math block."""
-        block_id = next_id("equation")
         if isinstance(elem, pf.Math):
-            text = f"$${elem.text}$$"
+            math_text = elem.text.strip()
         elif isinstance(elem, pf.Para) and len(elem.content) == 1 and isinstance(elem.content[0], pf.Math):
-            text = f"$${elem.content[0].text}$$"
+            math_text = elem.content[0].text.strip()
         else:
-            text = stringify_with_math(elem)
+            math_text = stringify_with_math(elem).strip()
+
+        if "\\xymatrix" in math_text:
+            block_id = next_id("raw_latex")
+            return {
+                "block_id": block_id,
+                "block_type": "raw_latex",
+                "content_original": f"```latex\n{math_text}\n```",
+                "content_expanded": f"```latex\n{math_text}\n```",
+                "sentences": [],
+                "label": "",
+            }
+
+        text = f"$${math_text}$$"
+        block_id = next_id("equation")
 
         return {
             "block_id": block_id,
@@ -325,12 +402,15 @@ def process_ast(
             if parent_id:
                 block_id = f"{parent_id}.{block_id}"
             text = stringify_with_math(elem)
+            sentences = split_sentences(text)
+            for s in sentences:
+                s["id"] = f"{block_id}.{s.pop('id_suffix')}"
             return [{
                 "block_id": block_id,
                 "block_type": "paragraph",
                 "content_original": text,
                 "content_expanded": text,
-                "sentences": split_sentences(text),
+                "sentences": sentences,
                 "label": "",
             }]
         return []
@@ -363,7 +443,7 @@ def process_ast(
 
             if env_type:
                 block_id = next_id(env_type)
-                label = elem.identifier or ""
+                label = _extract_div_label(elem)
 
                 # Collect all content of the environment
                 child_blocks = []
@@ -371,14 +451,21 @@ def process_ast(
                     child_blocks.extend(_process_any_element(
                         child, parent_id=block_id
                     ))
+                container_text = "\n\n".join(
+                    child["content_original"]
+                    for child in child_blocks
+                    if child["content_original"].strip()
+                )
 
-                # Create the environment block (content is in children only)
+                # Create the environment block. Children carry granular
+                # annotation targets; the parent also stores a flattened
+                # summary for previews, references, and bot context.
                 blocks.append(
                     {
                         "block_id": block_id,
                         "block_type": env_type,
-                        "content_original": "",  # children carry the content
-                        "content_expanded": "",
+                        "content_original": container_text,
+                        "content_expanded": container_text,
                         "sentences": [],
                         "label": label,
                         "children": child_blocks,
@@ -414,13 +501,18 @@ def process_ast(
                     child_blocks.extend(_process_any_element(
                         child_elem, parent_id=block_id
                     ))
+                container_text = "\n\n".join(
+                    child["content_original"]
+                    for child in child_blocks
+                    if child["content_original"].strip()
+                )
 
                 blocks.append(
                     {
                         "block_id": block_id,
                         "block_type": env_type,
-                        "content_original": "",
-                        "content_expanded": "",
+                        "content_original": container_text,
+                        "content_expanded": container_text,
                         "sentences": [],
                         "label": label,
                         "children": child_blocks,

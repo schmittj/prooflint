@@ -7,6 +7,7 @@ import { useUIStore } from "../stores/uiStore";
 interface BlockRendererProps {
     block: Block;
     isContainer?: boolean;
+    children?: React.ReactNode;
     annotations?: Annotation[];
     orderedBlockIds?: string[];
     /** Position in a run of same-overlay-color blocks */
@@ -78,6 +79,10 @@ const TYPE_STYLES: Record<string, React.CSSProperties> = {
         margin: "8px 0",
         lineHeight: "1.6",
     },
+    raw_latex: {
+        margin: "12px 0",
+        lineHeight: "1.4",
+    },
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -114,6 +119,12 @@ const CHECK_STYLES: Record<string, React.CSSProperties> = {
     human: { background: "#e6f4ea" },
     agent: { background: "#f0faf0" },
 };
+
+function stripLatexFence(content: string): string {
+    const trimmed = content.trim();
+    const match = trimmed.match(/^```(?:latex|tex)?\n([\s\S]*?)\n```$/);
+    return match ? match[1] : trimmed;
+}
 
 export function computeBlockOverlay(annotations: Annotation[]): React.CSSProperties {
     const issues = annotations.filter(
@@ -153,6 +164,7 @@ export function computeBlockOverlay(annotations: Annotation[]): React.CSSPropert
 export default function BlockRenderer({
     block,
     isContainer,
+    children,
     annotations = [],
     orderedBlockIds = [],
     colorRunPos,
@@ -196,12 +208,14 @@ export default function BlockRenderer({
         ...(shadows.length > 0 ? { boxShadow: shadows.join(", ") } : {}),
     };
 
-    const label = TYPE_LABELS[block.block_type];
+    const label = block.display_label || TYPE_LABELS[block.block_type];
     const showContent =
         !isContainer && !CONTAINER_TYPES.has(block.block_type);
+    const anchorId = block.label || block.block_id;
 
     return (
         <div
+            id={anchorId}
             data-block-id={block.block_id}
             style={style}
             onClick={(e) => {
@@ -225,7 +239,23 @@ export default function BlockRenderer({
                     {label}.{" "}
                 </span>
             )}
-            {showContent && block.content_original && (
+            {showContent && block.block_type === "raw_latex" && (
+                <pre
+                    style={{
+                        whiteSpace: "pre-wrap",
+                        overflowX: "auto",
+                        margin: 0,
+                        fontSize: "0.85em",
+                        background: "#f6f6f6",
+                        border: "1px solid #e0e0e0",
+                        borderRadius: "4px",
+                        padding: "8px",
+                    }}
+                >
+                    {stripLatexFence(block.content_original)}
+                </pre>
+            )}
+            {showContent && block.block_type !== "raw_latex" && block.content_original && (
                 <Markdown
                     remarkPlugins={[remarkMath]}
                     rehypePlugins={[rehypeMathjax]}
@@ -236,6 +266,7 @@ export default function BlockRenderer({
                     {block.content_original}
                 </Markdown>
             )}
+            {children}
         </div>
     );
 }
