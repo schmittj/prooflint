@@ -173,9 +173,9 @@ def test_process_ast_normalizes_equation_environments_to_display_math():
 
     equations = [b for b in blocks if b["block_type"] == "equation"]
     assert len(equations) == 2
-    assert equations[0]["content_original"].startswith("$$\\begin{split}")
+    assert equations[0]["content_original"].startswith("$$\n\\begin{split}")
     assert "\\end{equation}" not in equations[0]["content_original"]
-    assert equations[1]["content_original"].startswith("$$\\zeta")
+    assert equations[1]["content_original"].startswith("$$\n\\zeta")
     assert "\\end{equation" not in equations[1]["content_original"]
 
 

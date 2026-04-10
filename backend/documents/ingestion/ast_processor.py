@@ -161,6 +161,11 @@ def _normalize_display_math_text(text: str) -> str:
         text = match.group(2).strip()
 
 
+def _format_display_math(text: str) -> str:
+    """Format display math as a Markdown math fence."""
+    return f"$$\n{text.strip()}\n$$"
+
+
 def process_ast(
     source: str,
     source_format: str,
@@ -222,7 +227,7 @@ def process_ast(
             if elem.format == "InlineMath":
                 parts.append(f"${elem.text}$")
             else:
-                parts.append(f"$${elem.text}$$")
+                parts.append(_format_display_math(_normalize_display_math_text(elem.text)))
         elif isinstance(elem, pf.RawInline):
             parts.append(elem.text)
         elif isinstance(elem, pf.Code):
@@ -366,7 +371,7 @@ def process_ast(
                 "label": "",
             }
 
-        text = f"$${math_text}$$"
+        text = _format_display_math(math_text)
         block_id = next_id("equation")
 
         return {
